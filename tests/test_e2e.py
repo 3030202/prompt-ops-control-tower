@@ -67,3 +67,36 @@ def test_dashboard_tui_keyboard_flow(authed_page: Page):
     page.keyboard.press("Enter")
     expect(page.locator("#tagCloudDialog")).to_be_hidden()
     expect(page.locator("#quickSearch")).not_to_have_value("")
+
+
+def test_prompt_only_catalog_and_public_schema(authed_page: Page):
+    page = authed_page
+    page.goto(f"{BASE_URL}/prompts")
+    expect(page).to_have_title("Prompt Register // 8")
+    expect(page.get_by_role("heading", name="Prompt Register")).to_be_visible()
+    expect(page.locator("#search")).to_be_visible()
+    expect(page.locator(".sources-pane")).to_have_count(0)
+    expect(page.get_by_text("AI Provider")).to_have_count(0)
+
+    response = page.request.get(f"{BASE_URL}/api/prompts?limit=10")
+    assert response.ok
+    payload = response.json()
+    assert set(payload) == {"items", "count"}
+    for item in payload["items"]:
+        assert set(item) == {
+            "serial",
+            "title",
+            "prompt_body",
+            "description",
+            "tags",
+            "complexity",
+            "literacy_score",
+            "special_marks",
+            "remarks",
+            "prompt_type",
+        }
+    if payload["items"]:
+        expect(page.locator(".prompt-record").first).to_be_visible()
+        expect(page.locator(".prompt-code").first).to_be_visible()
+        page.keyboard.press("/")
+        expect(page.locator("#search")).to_be_focused()

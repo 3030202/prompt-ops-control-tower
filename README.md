@@ -14,7 +14,8 @@
 - drafts, preview, ручная публикация и scheduled autopost;
 - строгий live-контур с AI fail-closed, rate limits и дедупликацией;
 - style profiles по последним 50 сообщениям Telegram-канала;
-- публичная read-only Lite-витрина только для явно опубликованных материалов.
+- публичная read-only Lite-витрина только для явно опубликованных материалов;
+- отдельный Prompt Register: только нормализованные промпты, оценки сложности/грамотности, теги, пометки и замечания.
 
 ## Быстрый старт
 
@@ -29,9 +30,16 @@ docker compose up -d --build
 - Dashboard: `http://localhost:8000/`
 - Publishing Studio: `http://localhost:8000/studio`
 - Public Lite: `http://localhost:8000/lite`
+- Prompt Register: `http://localhost:8000/prompts`
 - Qdrant: `http://localhost:6333/dashboard`
 
 Dashboard и Studio используют HTTP Basic из `DASHBOARD_USER` / `DASHBOARD_PASS`.
+
+## Prompt-only поверхность
+
+`8.0x101.lol` предназначен только для каталога промптов. На этом hostname корень переписывается в `/prompts`, доступны лишь `/api/prompts` и `/health`, а dashboard, Studio, Lite и административные API возвращают `404`.
+
+Публичная модель содержит только: серийный номер, название, тело промпта, краткое описание, теги, сложность, инженерную грамотность, специальные пометки, замечания и тип промпта. Raw-материалы, пути, source metadata, session ID и приватные workspace/Telegram-источники не экспортируются. Список prompt-only host задаётся через `PROMPT_ONLY_HOSTS`.
 
 ## Источники и TUI
 

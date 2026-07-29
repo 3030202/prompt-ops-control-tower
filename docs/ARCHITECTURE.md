@@ -5,6 +5,8 @@ flowchart LR
   Sources[RSS / GitHub / Web / Telegram / Workspace] --> Ingest[Ingestion + normalization]
   Ingest --> Redis[(Redis AOF)]
   Ingest --> Qdrant[(Qdrant vector index)]
+  Ingest --> Prompts[Prompt projection + strict allowlist]
+  Prompts --> Register[8.0x101.lol Prompt Register]
   Ingest --> Rules[Publishing rule engine]
   Rules -->|live| Flash[Short live flash]
   Rules -->|scheduled| Queue[Candidate queue]
@@ -22,6 +24,7 @@ flowchart LR
 ## Trust boundaries
 
 - Administrative APIs and `/studio` use HTTP Basic authentication.
+- Prompt-only host middleware exposes only `/prompts`, `/api/prompts` and `/health`; workspace and Telegram records are rejected before projection.
 - `/api/public/*` and `/lite` are intentionally public and return an allowlisted schema only.
 - Telegram Bot API publishes; Telethon reads monitored/style channels.
 - A live rule with an unavailable AI predicate fails closed and creates a review draft.

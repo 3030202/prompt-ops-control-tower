@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import csv
 import hashlib
 import html
 import io
@@ -48,7 +49,24 @@ security = HTTPBasic()
 app = FastAPI(title="Prompt Ops Control Tower")
 app.include_router(publishing_router)
 
+
+@app.middleware("http")
+async def prompt_hostname_router(request: Request, call_next: Any) -> Response:
+    prompt_hosts = {host.strip().lower() for host in os.getenv("PROMPT_ONLY_HOSTS", "8.0x101.lol").split(",") if host.strip()}
+    hostname = (request.url.hostname or "").lower()
+    if hostname in prompt_hosts:
+        path = request.url.path
+        if path == "/":
+            request.scope["path"] = "/prompts"
+            request.scope["raw_path"] = b"/prompts"
+        elif path not in {"/health", "/api/prompts"}:
+            return JSONResponse({"detail": "Prompt-only surface"}, status_code=404)
+    return await call_next(request)
+
 ARTIFACTS_KEY = "promptops:artifacts:recent"
+PROMPTS_HASH_KEY = "promptops:prompts:items"
+PROMPTS_ORDER_KEY = "promptops:prompts:order"
+PROMPTS_SERIAL_KEY = "promptops:prompts:serial"
 ALERTS_KEY = "promptops:alerts:recent"
 SOURCE_CATALOG_KEY = "promptops:sources:catalog"
 SOURCE_DELETED_KEY = "promptops:sources:deleted"
@@ -67,10 +85,26 @@ EXCLUDE_DIRS = {".git", "__pycache__", "sessions", "node_modules", ".venv", ".my
 MAX_FILE_BYTES = 80_000
 MAX_SNIPPET_CHARS = 1_400
 MAX_PROMPT_ITEMS = 120
+MAX_PROMPT_BODY_CHARS = 6_000
+MAX_PROMPT_CATALOG = 1_000
 DUPE_TTL_SECONDS = 60 * 60 * 24 * 14
 GALLERY_CATEGORIES = {"Prompt", "System Prompt", "Image Prompt", "Video Prompt", "NotebookLM", "Distillate", "Pipeline", "Instruction", "Skill", "Agent", "Rule"}
+PROMPT_CATEGORIES = {"Prompt", "System Prompt", "Image Prompt", "Video Prompt", "NotebookLM", "Distillate"}
+PUBLIC_PROMPT_SOURCE_KINDS = {"prompt_csv", "rss", "github_atom", "web_page", "x_search"}
 
 DEFAULT_SOURCE_BLUEPRINTS = [
+    {
+        "id": "prompts_chat_catalog",
+        "name": "prompts.chat prompt catalog",
+        "kind": "prompt_csv",
+        "url": "https://raw.githubusercontent.com/f/awesome-chatgpt-prompts/main/prompts.csv",
+        "enabled": True,
+        "artifact_group": "General Prompts",
+        "recommended_interval_seconds": 3600,
+        "cadence_reason": "Публичный CC0 prompt dataset опрашивается раз в час и обрабатывается пакетами.",
+        "csv_offset": 0,
+        "csv_batch_size": 80,
+    },
     {
         "id": "cursor_latest",
         "name": "Cursor Hot",
@@ -776,6 +810,114 @@ def make_summary_from_text(text: str) -> str:
     return clean[:220] + ("..." if len(clean) > 220 else "")
 
 
+def extract_prompt_body(raw_text: str) -> str:
+    text = html.unescape(str(raw_text or "")).replace("\r\n", "\n").strip()
+    fenced = re.findall(r"```(?:[\w.+-]+)?[ \t]*\n(.*?)```", text, flags=re.DOTALL)
+    if fenced:
+        candidate = max(fenced, key=len).strip()
+        if candidate:
+            return candidate[:MAX_PROMPT_BODY_CHARS]
+    lines = []
+    for line in text.splitlines():
+        if re.match(r"^\s*(Title|Link|Repo|Path|Category|Source):\s*", line, flags=re.IGNORECASE):
+            continue
+        line = re.sub(r"<[^>]+>", " ", line)
+        lines.append(line)
+    candidate = "\n".join(lines).strip()
+    return candidate[:MAX_PROMPT_BODY_CHARS]
+
+
+def prompt_literacy_score(body: str) -> int:
+    lowered = body.lower()
+    score = 42
+    if any(token in lowered for token in ["you are", "act as", "ты —", "вы —", "роль:", "role:"]):
+        score += 12
+    if any(token in lowered for token in ["return", "output", "format", "верни", "формат", "структур"]):
+        score += 12
+    if any(token in lowered for token in ["must", "never", "only", "constraint", "обязательно", "только", "не добавляй"]):
+        score += 10
+    if any(token in body for token in ["{", "}", "<", ">", "${"]):
+        score += 8
+    if any(token in lowered for token in ["example", "например", "input:", "output:"]):
+        score += 8
+    if len(body) >= 500:
+        score += 5
+    if len(body) < 120:
+        score -= 18
+    return int(clamp(score, 1, 100))
+
+
+def prompt_special_marks(body: str, category: str) -> list[str]:
+    lowered = body.lower()
+    marks = []
+    if category == "System Prompt" or "system prompt" in lowered:
+        marks.append("SYSTEM_LEVEL")
+    if any(token in lowered for token in ["json", "yaml", "xml", "markdown", "code block"]):
+        marks.append("STRUCTURED_OUTPUT")
+    if re.search(r"\{\{?[_A-Za-z][^}\n]*\}\}?|\$\{[^}\n]+\}|<[_A-Za-z][^>\n]*>", body):
+        marks.append("HAS_VARIABLES")
+    if any(token in lowered for token in ["image", "midjourney", "flux", "video", "veo", "sora"]):
+        marks.append("MULTIMODAL")
+    if any(token in lowered for token in ["never", "must", "only", "обязательно", "запрещено", "только"]):
+        marks.append("STRICT_CONSTRAINTS")
+    return marks[:6]
+
+
+def prompt_remarks(body: str) -> list[str]:
+    lowered = body.lower()
+    remarks = []
+    if len(body) < 160:
+        remarks.append("Короткий контекст: результат может сильно зависеть от модели.")
+    if not any(token in lowered for token in ["return", "output", "format", "верни", "формат", "ответ"]):
+        remarks.append("Не задан явный формат результата.")
+    if not any(token in lowered for token in ["you are", "act as", "ты —", "роль:", "role:"]):
+        remarks.append("Роль модели не зафиксирована явно.")
+    if not any(token in lowered for token in ["must", "never", "only", "constraint", "обязательно", "только"]):
+        remarks.append("Ограничения сформулированы слабо.")
+    return remarks[:4]
+
+
+def looks_like_prompt(category: str, body: str, explicit: Any = None) -> bool:
+    if explicit is not None:
+        return bool(explicit)
+    if category in PROMPT_CATEGORIES:
+        return len(body.strip()) >= 40
+    lowered = body.lower()
+    signals = ["you are", "act as", "your task", "return only", "i want you to", "ты —", "твоя задача", "верни только", "создай", "сгенерируй"]
+    return len(body.strip()) >= 80 and any(signal in lowered for signal in signals)
+
+
+def build_prompt_projection(record: dict[str, Any], analysis: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    analysis = analysis or {}
+    if record.get("source_kind") not in PUBLIC_PROMPT_SOURCE_KINDS:
+        return None
+    body = str(analysis.get("prompt_body") or record.get("prompt_body") or extract_prompt_body(record.get("raw", ""))).strip()
+    category = str(record.get("type") or analysis.get("category") or "Prompt")
+    if not looks_like_prompt(category, body, analysis.get("is_prompt")):
+        return None
+    tags = list(dict.fromkeys([str(tag).strip().lower() for tag in (analysis.get("tags") or record.get("tags", [])) if str(tag).strip()]))[:12]
+    complexity = int(clamp(int(analysis.get("complexity", record.get("complexity", derive_complexity(category, body)))), 1, 100))
+    literacy = int(clamp(int(analysis.get("literacy_score", record.get("literacy_score", prompt_literacy_score(body)))), 1, 100))
+    marks = list(dict.fromkeys(analysis.get("special_marks") or record.get("special_marks") or prompt_special_marks(body, category)))[:8]
+    remarks = list(dict.fromkeys(analysis.get("remarks") or record.get("remarks") or prompt_remarks(body)))[:6]
+    return {
+        "id": record.get("id"),
+        "title": str(analysis.get("prompt_title") or record.get("title") or "Untitled prompt")[:160],
+        "prompt_body": body[:MAX_PROMPT_BODY_CHARS],
+        "description": str(analysis.get("description") or record.get("summary") or make_summary_from_text(body))[:500],
+        "tags": tags,
+        "complexity": complexity,
+        "literacy_score": literacy,
+        "special_marks": marks,
+        "remarks": remarks,
+        "prompt_type": category if category in PROMPT_CATEGORIES else "Prompt",
+        "source_kind": record.get("source_kind", ""),
+        "published_at": record.get("published_at") or iso_now(),
+        "published_ts": float(record.get("published_ts") or now_utc().timestamp()),
+        "updated_at": iso_now(),
+    }
+
+
 def heuristic_analysis(raw_text: str, path: str = "") -> dict[str, Any]:
     category, score = classify_artifact(path, raw_text)
     if category == "Noise":
@@ -784,6 +926,7 @@ def heuristic_analysis(raw_text: str, path: str = "") -> dict[str, Any]:
             score = 35
             category = "Instruction"
     tags = derive_tags(path or "workspace", raw_text, category)
+    prompt_body = extract_prompt_body(raw_text)
     return {
         "anomaly_score": score,
         "category": category,
@@ -793,6 +936,11 @@ def heuristic_analysis(raw_text: str, path: str = "") -> dict[str, Any]:
         "complexity": derive_complexity(category, raw_text),
         "killer_feature": "Локальная обработка без расходов на модель.",
         "should_disappear": "Дубли, лишний шум и boilerplate.",
+        "is_prompt": looks_like_prompt(category, prompt_body),
+        "prompt_body": prompt_body,
+        "literacy_score": prompt_literacy_score(prompt_body),
+        "special_marks": prompt_special_marks(prompt_body, category),
+        "remarks": prompt_remarks(prompt_body),
     }
 
 
@@ -1258,7 +1406,8 @@ def provider_messages(action: str, text: str, records: list[dict[str, Any]] | No
     elif action == "analysis":
         system = (
             "Ты проводишь экспресс-анализ артефакта. Верни только JSON: "
-            '{"summary":"...","killer_feature":"...","should_disappear":"...","tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."]}'
+            '{"summary":"...","killer_feature":"...","should_disappear":"...","tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."],"is_prompt":true,"prompt_title":"...","prompt_body":"...","description":"...","literacy_score":0,"special_marks":["..."],"remarks":["..."]}'
+            " Если вход не содержит самостоятельного применимого промпта, поставь is_prompt=false и prompt_body пустым."
         )
         user = text
     elif action == "augment":
@@ -1371,6 +1520,11 @@ def build_record(item: dict[str, Any], analysis: dict[str, Any], provider_name: 
         "should_disappear": analysis.get("should_disappear", ""),
         "augmentation": analysis.get("augmentation", ""),
         "anti_patterns": analysis.get("anti_patterns", []),
+        "is_prompt": bool(analysis.get("is_prompt", False)),
+        "prompt_body": str(analysis.get("prompt_body", ""))[:MAX_PROMPT_BODY_CHARS],
+        "literacy_score": int(clamp(int(analysis.get("literacy_score", prompt_literacy_score(raw))), 1, 100)),
+        "special_marks": analysis.get("special_marks", []),
+        "remarks": analysis.get("remarks", []),
         "entities": analysis.get("entities", extract_entities(path, raw)),
         "tags": tags,
         "raw": raw[:MAX_SNIPPET_CHARS],
@@ -1387,6 +1541,47 @@ def build_record(item: dict[str, Any], analysis: dict[str, Any], provider_name: 
         "origin": item.get("origin", ""),
     }
     return record
+
+
+async def store_prompt_projection(record: dict[str, Any], analysis: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    prompt = build_prompt_projection(record, analysis)
+    if not prompt:
+        return None
+    redis_client: aioredis.Redis = app.state.redis
+    existing_raw = await redis_client.hget(PROMPTS_HASH_KEY, str(prompt["id"]))
+    if existing_raw:
+        existing = json.loads(existing_raw)
+        prompt["serial"] = existing.get("serial")
+    else:
+        prompt["serial"] = f"P-{await redis_client.incr(PROMPTS_SERIAL_KEY):06d}"
+    await redis_client.hset(PROMPTS_HASH_KEY, str(prompt["id"]), json.dumps(prompt, ensure_ascii=False))
+    await redis_client.zadd(PROMPTS_ORDER_KEY, {str(prompt["id"]): prompt["published_ts"]})
+    overflow = await redis_client.zcard(PROMPTS_ORDER_KEY) - MAX_PROMPT_CATALOG
+    if overflow > 0:
+        stale_ids = await redis_client.zrange(PROMPTS_ORDER_KEY, 0, overflow - 1)
+        if stale_ids:
+            await redis_client.zrem(PROMPTS_ORDER_KEY, *stale_ids)
+            await redis_client.hdel(PROMPTS_HASH_KEY, *stale_ids)
+    return prompt
+
+
+async def load_prompt_catalog(limit: int = 200) -> list[dict[str, Any]]:
+    redis_client: aioredis.Redis = app.state.redis
+    ids = await redis_client.zrevrange(PROMPTS_ORDER_KEY, 0, max(0, min(limit, MAX_PROMPT_CATALOG) - 1))
+    if not ids:
+        return []
+    raw_items = await redis_client.hmget(PROMPTS_HASH_KEY, ids)
+    return [json.loads(raw) for raw in raw_items if raw]
+
+
+async def backfill_prompt_catalog() -> None:
+    records = await load_recent_artifacts(MAX_RECENT_ARTIFACTS)
+    stored = 0
+    for record in records:
+        if await store_prompt_projection(record):
+            stored += 1
+    if stored:
+        logging.info("Backfilled %s normalized prompts", stored)
 
 
 async def store_artifact(record: dict[str, Any]) -> None:
@@ -1417,8 +1612,18 @@ async def process_item(item: dict[str, Any], function_name: str = "ingest") -> d
 
     provider_name = app.state.provider_state.get("name", cfg.provider_name)
     model_name = app.state.provider_state.get("model", cfg.provider_model)
-    analysis = heuristic_analysis(raw, path)
-    if provider_is_configured():
+    is_prompt_csv = item.get("source_kind") == "prompt_csv"
+    analysis = heuristic_analysis(raw, "" if is_prompt_csv else path)
+    if is_prompt_csv:
+        title = str(item.get("title") or "Untitled prompt")
+        analysis.update({
+            "category": "Prompt",
+            "summary": f"Промпт задаёт модели роль «{title}» и описывает ожидаемый сценарий работы.",
+            "tags": derive_tags("", f"{title}\n{raw}", "Prompt"),
+            "complexity": derive_complexity("Prompt", raw),
+            "is_prompt": True,
+        })
+    if provider_is_configured() and not is_prompt_csv:
         try:
             parsed, usage, _ = await call_provider("analysis", raw)
             analysis = {
@@ -1433,6 +1638,7 @@ async def process_item(item: dict[str, Any], function_name: str = "ingest") -> d
             logging.warning("AI analysis fallback: %s", exc)
     record = build_record(item, analysis, provider_name, model_name, function_name)
     await store_artifact(record)
+    await store_prompt_projection(record, analysis)
     try:
         await evaluate_ingested_record(record)
     except Exception as exc:
@@ -1629,10 +1835,46 @@ async def fetch_x_search_items(client: AsyncClient, source: dict[str, Any]) -> l
     return items
 
 
+async def fetch_prompt_csv_items(client: AsyncClient, source: dict[str, Any]) -> list[dict[str, Any]]:
+    csv.field_size_limit(min(sys.maxsize, 10_000_000))
+    response = await client.get(source["url"], timeout=30.0, follow_redirects=True, headers={"User-Agent": "Prompt-Ops-Control-Tower/1.0"})
+    response.raise_for_status()
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+    if not rows:
+        return []
+    offset = int(source.get("csv_offset", 0)) % len(rows)
+    batch_size = int(clamp(int(source.get("csv_batch_size", 80)), 1, 200))
+    selected = (rows + rows)[offset:offset + min(batch_size, len(rows))]
+    source["csv_offset"] = (offset + len(selected)) % len(rows)
+    items = []
+    for index, row in enumerate(selected, start=offset):
+        body = str(row.get("prompt") or row.get("Prompt") or "").strip()
+        title = str(row.get("act") or row.get("title") or row.get("name") or f"Prompt {index + 1}").strip()
+        if len(body) < 40:
+            continue
+        items.append({
+            "text": body[:MAX_PROMPT_BODY_CHARS],
+            "path": f"{source['url']}#row-{index + 2}",
+            "source_id": source["id"],
+            "source_name": source["name"],
+            "source_kind": "prompt_csv",
+            "artifact_group": source_artifact_group(source),
+            "source_url": source["url"],
+            "title": title[:160],
+            "summary": f"Готовый промпт: {title}",
+            "published_at": iso_now(),
+            "published_ts": now_utc().timestamp() + index / 100_000,
+            "origin": "prompt_csv",
+        })
+    return items
+
+
 async def fetch_feed_items(client: AsyncClient, source: dict[str, Any]) -> list[dict[str, Any]]:
     if not source.get("enabled", True) or source.get("paused"):
         return []
     kind = source["kind"]
+    if kind == "prompt_csv":
+        return await fetch_prompt_csv_items(client, source)
     if kind == "workspace":
         return await scan_workspace_root(source["root"])
     if kind == "rss":
@@ -2490,6 +2732,45 @@ async def api_canvas_archive(payload: dict[str, Any] = Body(...), username: str 
     )
 
 
+def public_prompt_item(prompt: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "serial": prompt.get("serial", "P-000000"),
+        "title": prompt.get("title", "Untitled prompt"),
+        "prompt_body": prompt.get("prompt_body", ""),
+        "description": prompt.get("description", ""),
+        "tags": prompt.get("tags", []),
+        "complexity": int(prompt.get("complexity", 0)),
+        "literacy_score": int(prompt.get("literacy_score", 0)),
+        "special_marks": prompt.get("special_marks", []),
+        "remarks": prompt.get("remarks", []),
+        "prompt_type": prompt.get("prompt_type", "Prompt"),
+    }
+
+
+@app.get("/api/prompts")
+async def api_prompts(q: str = "", tag: str = "", min_complexity: int = 0, min_literacy: int = 0, limit: int = 200) -> JSONResponse:
+    prompts = await load_prompt_catalog(limit=max(1, min(limit, 500)))
+    query = normalize_ws(q).lower()
+    tag_query = tag.strip().lower()
+    filtered = []
+    for prompt in prompts:
+        if int(prompt.get("complexity", 0)) < min_complexity or int(prompt.get("literacy_score", 0)) < min_literacy:
+            continue
+        tags = [str(value).lower() for value in prompt.get("tags", [])]
+        if tag_query and tag_query not in tags:
+            continue
+        blob = normalize_ws(" ".join([prompt.get("title", ""), prompt.get("prompt_body", ""), prompt.get("description", ""), " ".join(tags)])).lower()
+        if query and query not in blob:
+            continue
+        filtered.append(public_prompt_item(prompt))
+    return JSONResponse({"items": filtered, "count": len(filtered)})
+
+
+@app.get("/prompts", response_class=HTMLResponse)
+async def prompt_catalog_page() -> HTMLResponse:
+    return HTMLResponse((Path(__file__).resolve().parent / "prompts" / "index.html").read_text(encoding="utf-8"))
+
+
 @app.get("/", response_class=HTMLResponse)
 async def get_dashboard(request: Request, username: str = Depends(authenticate)) -> HTMLResponse:
     filters = parse_request_filters(request)
@@ -2586,6 +2867,7 @@ async def lifespan(_: FastAPI):
 
     configure_publishing(app, load_selected_records, record_usage)
     app.state.background_tasks.append(asyncio.create_task(reindex_recent_artifacts()))
+    app.state.background_tasks.append(asyncio.create_task(backfill_prompt_catalog()))
     app.state.background_tasks.append(asyncio.create_task(publishing_scheduler_loop()))
     app.state.background_tasks.append(asyncio.create_task(poll_sources_loop(app.state.http_client, app.state.redis)))
     app.state.background_tasks.append(asyncio.create_task(vector_watchdog_loop()))
