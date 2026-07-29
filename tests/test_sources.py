@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,6 +9,7 @@ from prompt_ops_app import (
     build_prompt_register_export,
     classify_artifact,
     compact_prompt_item,
+    dedupe_prompt_records,
     filter_prompt_items,
     extract_prompt_body,
     fetch_x_search_items,
@@ -15,12 +17,49 @@ from prompt_ops_app import (
     prompt_mechanics,
     prompt_mechanics_description,
     prompt_facets,
+    prompt_body_hash,
     prompt_tags,
     prompt_token_estimate,
     public_prompt_item,
+    qdrant_record_payload,
     sort_prompt_items,
     source_artifact_group,
 )
+
+
+def test_qdrant_payload_preserves_artifact_id_and_exposes_vector_id():
+    vector_id = "17cf91fa-b19a-4a66-a872-3fb552d5ea50"
+    record = SimpleNamespace(id=vector_id, payload={"id": "a" * 24, "title": "Prompt"})
+
+    payload = qdrant_record_payload(record)
+
+    assert payload["id"] == "a" * 24
+    assert payload["vector_id"] == vector_id
+
+
+def test_qdrant_payload_supports_legacy_records_without_artifact_id():
+    vector_id = "17cf91fa-b19a-4a66-a872-3fb552d5ea50"
+    record = SimpleNamespace(id=vector_id, payload={"title": "Legacy prompt"})
+
+    payload = qdrant_record_payload(record)
+
+    assert payload["id"] == vector_id
+    assert payload["vector_id"] == vector_id
+
+
+def test_prompt_deduplication_prefers_stable_artifact_id():
+    stable_id = "a" * 24
+    vector_id = "17cf91fa-b19a-4a66-a872-3fb552d5ea50"
+    prompts = [
+        {"id": vector_id, "serial": "P-000001", "prompt_body": "  Return ONLY JSON. "},
+        {"id": stable_id, "serial": "P-000002", "prompt_body": "return only json."},
+    ]
+
+    kept, duplicates = dedupe_prompt_records(prompts)
+
+    assert [item["id"] for item in kept] == [stable_id]
+    assert [item["id"] for item in duplicates] == [vector_id]
+    assert prompt_body_hash(prompts[0]["prompt_body"]) == prompt_body_hash(prompts[1]["prompt_body"])
 
 
 def test_multimodal_and_distilled_artifact_classification():

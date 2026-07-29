@@ -72,6 +72,7 @@ PROMPTS_HASH_KEY = "promptops:prompts:items"
 PROMPTS_ORDER_KEY = "promptops:prompts:order"
 PROMPTS_SERIAL_KEY = "promptops:prompts:serial"
 PROMPTS_SERIAL_INDEX_KEY = "promptops:prompts:serial-index"
+PROMPTS_BODY_INDEX_KEY = "promptops:prompts:body-index"
 ALERTS_KEY = "promptops:alerts:recent"
 SOURCE_CATALOG_KEY = "promptops:sources:catalog"
 SOURCE_DELETED_KEY = "promptops:sources:deleted"
@@ -1289,6 +1290,13 @@ def vector_point_id(artifact_id: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"promptops:{artifact_id}"))
 
 
+def qdrant_record_payload(record: Any) -> dict[str, Any]:
+    payload = dict(record.payload or {})
+    payload.setdefault("id", str(record.id))
+    payload["vector_id"] = str(record.id)
+    return payload
+
+
 def default_source_catalog(cfg: Config) -> list[dict[str, Any]]:
     catalog: list[dict[str, Any]] = []
     for blueprint in DEFAULT_SOURCE_BLUEPRINTS:
@@ -1462,8 +1470,7 @@ async def qdrant_retrieve(ids: list[str]) -> list[dict[str, Any]]:
         )
         result: list[dict[str, Any]] = []
         for record in records:
-            payload = dict(record.payload or {})
-            payload["id"] = str(record.id)
+            payload = qdrant_record_payload(record)
             result.append(payload)
         return result
 
@@ -1550,8 +1557,7 @@ async def qdrant_search(
             )
         result: list[dict[str, Any]] = []
         for record in records:
-            payload = dict(record.payload or {})
-            payload["id"] = str(record.id)
+            payload = qdrant_record_payload(record)
             payload["search_score"] = getattr(record, "score", None)
             result.append(payload)
         result.sort(key=lambda item: item.get("published_ts", 0), reverse=True)
@@ -1858,11 +1864,52 @@ def build_record(item: dict[str, Any], analysis: dict[str, Any], provider_name: 
     return record
 
 
+def prompt_body_hash(body: str) -> str:
+    normalized = normalize_ws(html.unescape(str(body or ""))).lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest() if normalized else ""
+
+
+def prompt_record_priority(prompt: dict[str, Any]) -> tuple[int, int]:
+    prompt_id = str(prompt.get("id", ""))
+    original_artifact_id = 0 if re.fullmatch(r"[0-9a-f]{24}", prompt_id) else 1
+    serial_match = re.fullmatch(r"P-(\d{6})", str(prompt.get("serial", "")))
+    serial_number = int(serial_match.group(1)) if serial_match else sys.maxsize
+    return original_artifact_id, serial_number
+
+
+def dedupe_prompt_records(prompts: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    canonical: dict[str, dict[str, Any]] = {}
+    duplicates: list[dict[str, Any]] = []
+    for prompt in prompts:
+        body_hash = prompt_body_hash(prompt.get("prompt_body", ""))
+        if not body_hash:
+            continue
+        current = canonical.get(body_hash)
+        if current is None:
+            canonical[body_hash] = prompt
+        elif prompt_record_priority(prompt) < prompt_record_priority(current):
+            duplicates.append(current)
+            canonical[body_hash] = prompt
+        else:
+            duplicates.append(prompt)
+    kept_ids = {str(prompt.get("id")) for prompt in canonical.values()}
+    kept = [prompt for prompt in prompts if str(prompt.get("id")) in kept_ids]
+    return kept, duplicates
+
+
 async def store_prompt_projection(record: dict[str, Any], analysis: dict[str, Any] | None = None) -> dict[str, Any] | None:
     prompt = build_prompt_projection(record, analysis)
     if not prompt:
         return None
     redis_client: aioredis.Redis = app.state.redis
+    body_hash = prompt_body_hash(prompt.get("prompt_body", ""))
+    canonical_id = await redis_client.hget(PROMPTS_BODY_INDEX_KEY, body_hash) if body_hash else None
+    if canonical_id and canonical_id != str(prompt["id"]):
+        canonical_raw = await redis_client.hget(PROMPTS_HASH_KEY, canonical_id)
+        if canonical_raw:
+            prompt["id"] = canonical_id
+        else:
+            await redis_client.hdel(PROMPTS_BODY_INDEX_KEY, body_hash)
     existing_raw = await redis_client.hget(PROMPTS_HASH_KEY, str(prompt["id"]))
     if existing_raw:
         existing = json.loads(existing_raw)
@@ -1871,6 +1918,8 @@ async def store_prompt_projection(record: dict[str, Any], analysis: dict[str, An
         prompt["serial"] = f"P-{await redis_client.incr(PROMPTS_SERIAL_KEY):06d}"
     await redis_client.hset(PROMPTS_HASH_KEY, str(prompt["id"]), json.dumps(prompt, ensure_ascii=False))
     await redis_client.hset(PROMPTS_SERIAL_INDEX_KEY, str(prompt["serial"]), str(prompt["id"]))
+    if body_hash:
+        await redis_client.hset(PROMPTS_BODY_INDEX_KEY, body_hash, str(prompt["id"]))
     await redis_client.zadd(PROMPTS_ORDER_KEY, {str(prompt["id"]): prompt["published_ts"]})
     overflow = await redis_client.zcard(PROMPTS_ORDER_KEY) - MAX_PROMPT_CATALOG
     if overflow > 0:
@@ -1878,13 +1927,15 @@ async def store_prompt_projection(record: dict[str, Any], analysis: dict[str, An
         if stale_ids:
             stale_raw = await redis_client.hmget(PROMPTS_HASH_KEY, stale_ids)
             stale_prompts = [json.loads(raw) for raw in stale_raw if raw]
-            stale_serials = [prompt.get("serial") for prompt in stale_prompts if prompt.get("serial")]
+            stale_serials = [item.get("serial") for item in stale_prompts if item.get("serial")]
+            stale_hashes = [prompt_body_hash(item.get("prompt_body", "")) for item in stale_prompts]
             await redis_client.zrem(PROMPTS_ORDER_KEY, *stale_ids)
             await redis_client.hdel(PROMPTS_HASH_KEY, *stale_ids)
             if stale_serials:
                 await redis_client.hdel(PROMPTS_SERIAL_INDEX_KEY, *stale_serials)
+            if stale_hashes:
+                await redis_client.hdel(PROMPTS_BODY_INDEX_KEY, *stale_hashes)
     return prompt
-
 
 async def load_prompt_catalog(limit: int = 200) -> list[dict[str, Any]]:
     redis_client: aioredis.Redis = app.state.redis
@@ -1903,6 +1954,16 @@ async def backfill_prompt_catalog() -> None:
             stored += 1
 
     prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
+    prompts, duplicates = dedupe_prompt_records(prompts)
+    if duplicates:
+        duplicate_ids = [str(prompt["id"]) for prompt in duplicates if prompt.get("id")]
+        duplicate_serials = [str(prompt["serial"]) for prompt in duplicates if prompt.get("serial")]
+        if duplicate_ids:
+            await app.state.redis.zrem(PROMPTS_ORDER_KEY, *duplicate_ids)
+            await app.state.redis.hdel(PROMPTS_HASH_KEY, *duplicate_ids)
+        if duplicate_serials:
+            await app.state.redis.hdel(PROMPTS_SERIAL_INDEX_KEY, *duplicate_serials)
+
     description_updates = {}
     for prompt in prompts:
         title = prompt.get("title", "Untitled prompt")
@@ -1926,10 +1987,17 @@ async def backfill_prompt_catalog() -> None:
     if description_updates:
         await app.state.redis.hset(PROMPTS_HASH_KEY, mapping=description_updates)
         serial_index = {str(prompt["serial"]): str(prompt["id"]) for prompt in prompts if prompt.get("serial") and prompt.get("id")}
+        body_index = {prompt_body_hash(prompt.get("prompt_body", "")): str(prompt["id"]) for prompt in prompts if prompt.get("id") and prompt_body_hash(prompt.get("prompt_body", ""))}
         if serial_index:
             await app.state.redis.hset(PROMPTS_SERIAL_INDEX_KEY, mapping=serial_index)
-    if stored or description_updates:
-        logging.info("Backfilled %s prompts and refreshed %s descriptions", stored, len(description_updates))
+        await app.state.redis.delete(PROMPTS_BODY_INDEX_KEY)
+        if body_index:
+            await app.state.redis.hset(PROMPTS_BODY_INDEX_KEY, mapping=body_index)
+    if stored or description_updates or duplicates:
+        logging.info(
+            "Backfilled %s prompts, refreshed %s descriptions, removed %s duplicates",
+            stored, len(description_updates), len(duplicates),
+        )
 
 
 async def store_artifact(record: dict[str, Any]) -> None:
@@ -2455,8 +2523,7 @@ async def load_recent_artifacts(limit: int = 80) -> list[dict[str, Any]]:
             )
             items: list[dict[str, Any]] = []
             for record in records:
-                payload = dict(record.payload or {})
-                payload["id"] = str(record.id)
+                payload = qdrant_record_payload(record)
                 items.append(payload)
             items.sort(key=lambda item: item.get("published_ts", 0), reverse=True)
             return items[:limit]
