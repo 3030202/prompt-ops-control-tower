@@ -30,4 +30,4 @@ def test_studio_channel_button_and_lite_visibility(authed_page: Page):
     page.request.delete(f"{BASE_URL}/api/channels/{channel_id}")
     page.goto(f"{BASE_URL}/lite")
     expect(page).to_have_title("Prompt Ops Lite")
-    expect(page.get_by_text("Prompt Ops Lite")).to_be_visible()
+    expect(page.get_by_role("heading", name="Prompt Ops Lite")).to_be_visible()
