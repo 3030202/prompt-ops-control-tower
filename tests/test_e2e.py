@@ -31,3 +31,21 @@ def test_studio_channel_button_and_lite_visibility(authed_page: Page):
     page.goto(f"{BASE_URL}/lite")
     expect(page).to_have_title("Prompt Ops Lite")
     expect(page.get_by_role("heading", name="Prompt Ops Lite")).to_be_visible()
+
+
+def test_dashboard_tui_keyboard_flow(authed_page: Page):
+    page = authed_page
+    page.goto(f"{BASE_URL}/")
+    expect(page).to_have_title("Prompt Ops // TUI")
+    expect(page.locator(".artifact-row").first).to_be_visible()
+    page.keyboard.press("Space")
+    expect(page.locator("#selectedCount")).to_have_text("1")
+    page.keyboard.press("3")
+    expect(page.locator("#previewMode")).to_have_text("Canvas")
+    page.keyboard.press("/")
+    expect(page.locator("#quickSearch")).to_be_focused()
+    page.keyboard.press("Escape")
+    page.locator("body").click(position={"x": 5, "y": 5})
+    page.keyboard.press("Control+k")
+    expect(page.locator("#commandPalette")).to_be_visible()
+    expect(page.get_by_text("Export selection")).to_be_visible()

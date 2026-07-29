@@ -1728,71 +1728,53 @@ def render_badge(text: str, cls: str = "") -> str:
 
 
 def render_source_card(source: dict[str, Any]) -> str:
-    state = html.escape(str(source.get("state", "idle")))
-    detail = html.escape(str(source.get("detail", "")))
+    state_raw = str(source.get("state", "idle"))
+    state = state_raw if state_raw in {"success", "running", "error", "idle"} else "idle"
+    marker = {"success": "●", "running": "◆", "error": "!", "idle": "·"}[state]
+    source_id = html.escape(str(source.get("id", "")), quote=True)
+    detail = html.escape(str(source.get("detail", "waiting")))
     cadence = html.escape(source_cadence_label(source))
-    group = html.escape(str(source.get("preset_group", "Custom")))
     interval = int(source_effective_interval(source))
     next_refresh = html.escape(format_relative(source.get("next_refresh_at")))
-    reason = html.escape(str(source.get("cadence_reason", "")))
-    enabled = "checked" if source.get("enabled", True) else ""
-    paused = "Resume" if source.get("paused") else "Pause"
-    manual = source.get("manual_interval_seconds") or ""
+    paused = bool(source.get("paused"))
+    enabled = bool(source.get("enabled", True))
+    action_state = "resume" if paused else "pause"
     return f"""
-    <div class="source-card" data-source-id="{html.escape(source['id'])}">
-        <div class="source-head">
-            <div>
-                <div class="source-name">{html.escape(source.get('name', ''))}</div>
-                <div class="source-kind">{html.escape(source.get('kind', ''))} / {group}</div>
-            </div>
-            <div class="source-state {state}">{state}</div>
-        </div>
-        <div class="source-detail">{detail}</div>
-        <div class="source-mini">
-            {render_badge(f"interval {interval}s", cadence)}
-            {render_badge(f"next {next_refresh}")}
-            {render_badge(f"manual {manual or 'auto'}")}
-        </div>
-        <div class="source-reason">{reason}</div>
-        <div class="source-actions">
-            <label class="toggle"><input type="checkbox" data-source-enabled="{html.escape(source['id'])}" {enabled} onchange="toggleSourceEnabled('{html.escape(source['id'])}', this.checked)" /> enabled</label>
-            <label class="interval">
-                <span>interval</span>
-                <input type="number" min="30" step="30" value="{html.escape(str(manual or interval))}" data-source-interval="{html.escape(source['id'])}" />
-            </label>
-            <button type="button" onclick="saveSourceInterval('{html.escape(source['id'])}')">save</button>
-            <button type="button" onclick="deleteSource('{html.escape(source['id'])}')">delete</button>
-            <button type="button" onclick="toggleSourcePaused('{html.escape(source['id'])}', {str(bool(source.get('paused'))).lower()})">{paused}</button>
-        </div>
+    <div class="source-row {state}" data-source-id="{source_id}" title="{detail}">
+        <span class="state">{marker}</span>
+        <span class="source-name">{html.escape(source.get('name', ''))}<small>{detail}</small></span>
+        <span>{html.escape(source.get('kind', ''))}</span>
+        <span>{cadence}</span>
+        <span>{next_refresh}</span>
+        <span class="source-actions">
+            <input aria-label="interval" type="number" min="30" step="30" value="{interval}" data-source-interval="{source_id}">
+            <button class="tinybtn" title="save interval" onclick="saveSourceInterval('{source_id}')">[s]</button>
+            <button class="tinybtn" title="{action_state}" onclick="toggleSourcePaused('{source_id}', {str(paused).lower()})">[{action_state[0]}]</button>
+            <button class="tinybtn" title="{'disable' if enabled else 'enable'}" onclick="toggleSourceEnabled('{source_id}', {str(not enabled).lower()})">[{'on' if enabled else 'off'}]</button>
+            <button class="tinybtn" title="delete" onclick="deleteSource('{source_id}')">[x]</button>
+        </span>
     </div>
     """
 
 
 def render_artifact_card(item: dict[str, Any]) -> str:
-    tags = "".join(render_badge(tag, "tag") for tag in item.get("tags", [])[:8]) or render_badge("no tags", "muted")
-    entities = "".join(render_badge(str(entity), "entity") for entity in item.get("entities", [])[:6]) or render_badge("no entities", "muted")
-    score = int(item.get("rating", 0))
-    type_cls = f"type-{slugify(item.get('type', 'noise'))}"
-    created = html.escape(format_relative(item.get("published_at")))
-    search_blob = html.escape(item.get("search_blob", ""))
+    score = int(item.get("rating", 0) or 0)
+    score_cls = "high" if score >= 70 else "mid" if score >= 40 else "low"
+    artifact_id = str(item.get("id", ""))
+    tags = " ".join(f"#{tag}" for tag in item.get("tags", [])[:5]) or "-"
+    search_blob = normalize_ws(" ".join([
+        item.get("title", ""), item.get("summary", ""), item.get("source_name", ""),
+        item.get("type", ""), " ".join(item.get("tags", [])), item.get("raw", "")[:600],
+    ])).lower()
     return f"""
-    <article class="artifact-card" data-artifact-id="{html.escape(item['id'])}" data-search="{search_blob}">
-        <div class="artifact-top">
-            <label class="select-box"><input type="checkbox" class="artifact-select" value="{html.escape(item['id'])}" onchange="syncSelection()" /></label>
-            <div class="artifact-score">{score}</div>
-            <div class="artifact-type {type_cls}">{html.escape(item.get('type', 'Unknown'))}</div>
-        </div>
-        <div class="artifact-title">{html.escape(item.get('title', 'Untitled'))}</div>
-        <div class="artifact-meta">
-            <span>{html.escape(item.get('source_name', ''))}</span>
-            <span>{html.escape(item.get('source_kind', ''))}</span>
-            <span>{created}</span>
-        </div>
-        <div class="artifact-summary">{html.escape(item.get('summary', ''))}</div>
-        <div class="artifact-chips">{tags}</div>
-        <div class="artifact-chips subtle">{entities}</div>
-        <pre>{html.escape(item.get('raw', ''))}</pre>
-    </article>
+    <div class="artifact-row" role="row" tabindex="-1" data-artifact-id="{html.escape(artifact_id, quote=True)}" data-search="{html.escape(search_blob, quote=True)}">
+        <span class="mark cell">[ ]</span>
+        <span class="cell">{html.escape(artifact_id[:8])}</span>
+        <span class="score {score_cls} cell">{score:03d}</span>
+        <span class="atype cell">{html.escape(item.get('type', 'Unknown'))}</span>
+        <span class="tags cell">{html.escape(tags)}</span>
+        <span class="cell">{html.escape(item.get('title', 'Untitled'))}</span>
+    </div>
     """
 
 
@@ -1878,25 +1860,23 @@ def render_toolbar(filters: dict[str, Any], sources: list[dict[str, Any]], types
     sources_csv = ",".join(filters.get("sources", []))
     types_csv = ",".join(filters.get("types", []))
     tags_csv = ",".join(filters.get("tags", []))
+    opened = "open" if any(value for key, value in filters.items() if key not in {"q", "semantic"}) else ""
     return f"""
-    <details class="filter-drawer" {"open" if any(filters.values()) else ""}>
-    <summary>Фильтры / semantic search</summary>
-    <form class="toolbar" method="get" action="/">
-        <input name="q" value="{html.escape(filters.get('q', ''))}" placeholder="Text search..." />
-        <input name="semantic" value="{html.escape(filters.get('semantic', ''))}" placeholder="Semantic search..." />
-        <input name="types" value="{html.escape(types_csv)}" placeholder="Types comma separated" />
-        <input name="sources" value="{html.escape(sources_csv)}" placeholder="Sources comma separated" />
-        <input name="tags" value="{html.escape(tags_csv)}" placeholder="Tags comma separated" />
-        <input name="min_rating" type="number" min="0" max="100" value="{filters.get('min_rating', '') if filters.get('min_rating') is not None else ''}" placeholder="Min rating" />
-        <input name="max_rating" type="number" min="0" max="100" value="{filters.get('max_rating', '') if filters.get('max_rating') is not None else ''}" placeholder="Max rating" />
-        <input name="min_complexity" type="number" min="0" max="100" value="{filters.get('min_complexity', '') if filters.get('min_complexity') is not None else ''}" placeholder="Min complexity" />
-        <input name="max_complexity" type="number" min="0" max="100" value="{filters.get('max_complexity', '') if filters.get('max_complexity') is not None else ''}" placeholder="Max complexity" />
-        <input name="date_from" type="date" value="{html.escape(filters.get('date_from', ''))}" />
-        <input name="date_to" type="date" value="{html.escape(filters.get('date_to', ''))}" />
-        <button type="submit">Apply</button>
-        <a class="clear-link" href="/">Reset</a>
+    <form method="get" action="/">
+        <div class="quick-filter"><span class="prompt">SEARCH&gt;</span><input id="quickSearch" name="q" value="{html.escape(filters.get('q', ''), quote=True)}" placeholder="type to filter; Enter runs server search"><span class="prompt">SEM&gt;</span><input name="semantic" value="{html.escape(filters.get('semantic', ''), quote=True)}" placeholder="semantic query"><button class="tinybtn" type="submit">[enter]</button><a class="tinybtn" href="/">[clear]</a></div>
+        <details {opened}><summary>[+] advanced filters / combined AND</summary><div class="advanced">
+            <input name="types" value="{html.escape(types_csv, quote=True)}" placeholder="types">
+            <input name="sources" value="{html.escape(sources_csv, quote=True)}" placeholder="sources">
+            <input name="tags" value="{html.escape(tags_csv, quote=True)}" placeholder="tags">
+            <input name="min_rating" type="number" min="0" max="100" value="{filters.get('min_rating', '') if filters.get('min_rating') is not None else ''}" placeholder="rating min">
+            <input name="max_rating" type="number" min="0" max="100" value="{filters.get('max_rating', '') if filters.get('max_rating') is not None else ''}" placeholder="rating max">
+            <input name="min_complexity" type="number" min="0" max="100" value="{filters.get('min_complexity', '') if filters.get('min_complexity') is not None else ''}" placeholder="complexity min">
+            <input name="max_complexity" type="number" min="0" max="100" value="{filters.get('max_complexity', '') if filters.get('max_complexity') is not None else ''}" placeholder="complexity max">
+            <input name="date_from" type="date" value="{html.escape(filters.get('date_from', ''), quote=True)}">
+            <input name="date_to" type="date" value="{html.escape(filters.get('date_to', ''), quote=True)}">
+            <button type="submit">apply filters</button>
+        </div></details>
     </form>
-    </details>
     """
 
 
@@ -2214,464 +2194,47 @@ async def get_dashboard(request: Request, username: str = Depends(authenticate))
     sources = await load_source_catalog()
     provider = app.state.provider_state
     snapshot = await get_telemetry_snapshot()
-    artifacts_html = "".join(render_artifact_card(item) for item in artifacts) or '<div class="empty">Пока ничего не найдено.</div>'
     alerts = await load_alerts(16)
-    alerts_html = "".join(
-        f'<div class="mini-alert"><strong>{html.escape(item.get("type", ""))}</strong><span>{html.escape(item.get("summary", ""))}</span></div>'
-        for item in alerts[:8]
-    ) or '<div class="empty small">Высоких сигналов пока нет.</div>'
-    source_html = "".join(render_source_card(source) for source in sources) or '<div class="empty small">Источников нет.</div>'
-    source_names = sorted({item.get("source_name", "") for item in sources if item.get("source_name")})
-    types = sorted({item.get("type", "") for item in artifacts if item.get("type")})
     models = provider.get("loaded_models", [])
-    page = f"""
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Prompt Ops Control Tower</title>
-        <style>
-            :root {{
-                --bg: #090a0b;
-                --panel: #111316;
-                --panel-raised: #171a1f;
-                --line: #2a2e35;
-                --text: #f1efe7;
-                --muted: #969b9f;
-                --accent: #d9ff43;
-                --accent2: #5bd8ff;
-                --accent3: #ff984f;
-                --danger: #ff6b79;
-            }}
-            * {{ box-sizing: border-box; }}
-            body {{
-                margin: 0;
-                min-height: 100vh;
-                color: var(--text);
-                font-family: "Bahnschrift", "Aptos Narrow", "Segoe UI", sans-serif;
-                background-color: var(--bg);
-                background-image:
-                    linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px),
-                    radial-gradient(circle at 72% -10%, rgba(91,216,255,.12), transparent 30%);
-                background-size: 28px 28px, 28px 28px, auto;
-                padding-bottom: 92px;
-            }}
-            .shell {{ max-width: 1680px; margin: 0 auto; padding: 18px; }}
-            .hero {{
-                border: 1px solid var(--line);
-                border-radius: 8px;
-                padding: 22px;
-                background: linear-gradient(115deg, #14171b 0%, #0e1013 68%, rgba(91,216,255,.08) 100%);
-                box-shadow: 0 18px 60px rgba(0,0,0,.34);
-            }}
-            .hero h1 {{ margin: 10px 0 0; max-width: 17ch; font-size: clamp(30px, 4vw, 54px); line-height: .94; letter-spacing: -.045em; text-transform: uppercase; }}
-            .eyebrow {{ color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }}
-            .hero p {{ color: #c9d8d2; max-width: 78ch; line-height: 1.6; }}
-            .hero-grid {{ display: grid; grid-template-columns: 1.35fr 0.85fr; gap: 18px; align-items: start; }}
-            .hero-badges {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }}
-            .badge, .chip {{
-                display: inline-flex;
-                gap: 6px;
-                align-items: center;
-                padding: 8px 12px;
-                border-radius: 4px;
-                border: 1px solid var(--line);
-                background: rgba(255,255,255,0.05);
-                color: #d8e6df;
-                font-size: 12px;
-            }}
-            .badge.tag {{ background: rgba(110,231,183,0.12); }}
-            .badge.entity {{ background: rgba(96,165,250,0.12); }}
-            .badge.muted {{ color: var(--muted); }}
-            .dashboard-grid {{ display: grid; grid-template-columns: 360px 1fr; gap: 18px; margin-top: 18px; }}
-            .panel {{
-                border: 1px solid var(--line);
-                border-radius: 7px;
-                background: var(--panel);
-                box-shadow: 0 14px 42px rgba(0,0,0,.24);
-                padding: 18px;
-            }}
-            .panel h2 {{ margin: 0 0 14px; font-size: 18px; }}
-            .panel .empty {{ padding: 18px; text-align: center; color: var(--muted); border: 1px dashed rgba(141,168,212,0.22); border-radius: 5px; }}
-            .panel .empty.small {{ padding: 14px; font-size: 13px; }}
-            .panel-actions {{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }}
-            .panel-actions button, .toolbar button, .toolbar a, .source-actions button {{
-                border: 1px solid rgba(141,168,212,0.18);
-                background: rgba(255,255,255,0.06);
-                color: var(--text);
-                border-radius: 5px;
-                padding: 10px 14px;
-                cursor: pointer;
-                text-decoration: none;
-            }}
-            .filter-drawer {{ margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }}
-            .filter-drawer summary {{ cursor: pointer; color: var(--accent2); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
-            .toolbar {{
-                display: grid;
-                grid-template-columns: repeat(6, minmax(0, 1fr));
-                gap: 10px;
-                margin-top: 18px;
-            }}
-            .toolbar input, .toolbar select, .form-grid input, .form-grid select {{
-                width: 100%;
-                border-radius: 5px;
-                border: 1px solid var(--line);
-                background: rgba(255,255,255,0.04);
-                color: var(--text);
-                padding: 12px 14px;
-                outline: none;
-            }}
-            .toolbar .clear-link {{ display: inline-flex; align-items: center; justify-content: center; }}
-            .mini-stats {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }}
-            .stat-card {{
-                border: 1px solid var(--line);
-                border-radius: 6px;
-                padding: 14px;
-                background: rgba(255,255,255,0.03);
-            }}
-            .stat-label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; }}
-            .stat-value {{ font-size: 32px; font-weight: 800; margin-top: 8px; }}
-            .stat-note {{ color: #a8b9b3; margin-top: 6px; font-size: 13px; }}
-            .source-card, .artifact-card {{
-                border: 1px solid var(--line);
-                border-radius: 7px;
-                padding: 16px;
-                background: var(--panel-raised);
-                box-shadow: 0 8px 24px rgba(0,0,0,.2);
-            }}
-            .source-card + .source-card, .artifact-card + .artifact-card {{ margin-top: 12px; }}
-            .source-head, .artifact-top {{ display: flex; justify-content: space-between; gap: 10px; align-items: center; }}
-            .source-name, .artifact-title {{ font-weight: 800; font-size: 18px; }}
-            .source-kind, .source-detail, .source-reason, .artifact-meta {{ color: var(--muted); font-size: 12px; margin-top: 4px; }}
-            .source-mini, .artifact-chips {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }}
-            .source-actions {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }}
-            .source-actions .toggle, .source-actions .interval {{ display: inline-flex; gap: 8px; align-items: center; font-size: 12px; color: #d8e6df; }}
-            .source-actions .interval input {{ width: 110px; }}
-            .source-state {{ padding: 6px 10px; border-radius: 4px; font-size: 11px; text-transform: uppercase; }}
-            .source-state.success {{ background: rgba(110,231,183,0.14); color: #9ef0cc; }}
-            .source-state.error {{ background: rgba(251,113,133,0.14); color: #f9b0d2; }}
-            .source-state.running {{ background: rgba(96,165,250,0.14); color: #c9e0ff; }}
-            .artifact-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
-            .source-list {{ max-height: 76vh; overflow: auto; padding-right: 4px; scrollbar-color: var(--line) transparent; }}
-            .artifact-score {{
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                min-width: 54px;
-                padding: 6px 10px;
-                border-radius: 4px;
-                background: var(--accent);
-                color: #041118;
-                font-weight: 800;
-            }}
-            .artifact-type {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent2); }}
-            .artifact-type.type-noise {{ color: var(--muted); }}
-            .artifact-summary {{ margin-top: 10px; color: #d8e6df; line-height: 1.55; }}
-            .artifact-card pre {{ margin: 12px 0 0; padding: 12px; border-radius: 5px; background: rgba(4,10,19,0.72); border: 1px solid rgba(141,168,212,0.10); white-space: pre-wrap; word-break: break-word; color: #b7c6dc; font-size: 12px; line-height: 1.5; }}
-            .section-title {{ display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin: 24px 0 12px; }}
-            .section-title h2 {{ margin: 0; }}
-            .section-title p {{ margin: 0; color: var(--muted); font-size: 13px; }}
-            .telemetry-bar {{
-                position: fixed;
-                left: 16px;
-                right: 16px;
-                bottom: 14px;
-                z-index: 40;
-                display: grid;
-                grid-template-columns: 1.1fr 1.1fr 1fr;
-                gap: 10px;
-                padding: 12px 14px;
-                border: 1px solid var(--line);
-                border-radius: 6px;
-                background: rgba(17,19,22,.96);
-                backdrop-filter: blur(14px);
-                box-shadow: 0 20px 50px rgba(0,0,0,0.25);
-                font-size: 12px;
-            }}
-            .telemetry-left, .telemetry-mid, .telemetry-right {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }}
-            .telemetry-left strong {{ font-size: 13px; }}
-            .selected-badge {{ background: rgba(251,191,36,0.15); color: #ffd87d; }}
-            .form-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }}
-            .muted {{ color: var(--muted); }}
-            .controls {{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }}
-            .controls button {{ padding: 10px 14px; border-radius: 4px; border: 1px solid var(--line); background: #1a1d22; color: var(--text); cursor: pointer; }}
-            .controls button:first-child, .panel-actions button:first-child {{ background: var(--accent); border-color: var(--accent); color: #090a0b; font-weight: 800; }}
-            dialog {{ width: min(760px, calc(100vw - 32px)); max-height: 78vh; color: var(--text); background: #111316; border: 1px solid var(--line); border-radius: 7px; padding: 0; box-shadow: 0 30px 100px #000; }}
-            dialog::backdrop {{ background: rgba(0,0,0,.72); backdrop-filter: blur(3px); }}
-            .dialog-head {{ display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }}
-            .dialog-head button {{ background: transparent; color: var(--text); border: 1px solid var(--line); cursor: pointer; }}
-            #resultBody {{ margin: 0; padding: 18px; max-height: 62vh; overflow: auto; white-space: pre-wrap; color: #d7dde1; }}
-            @media (max-width: 1200px) {{
-                .hero-grid, .dashboard-grid, .artifact-grid, .telemetry-bar, .toolbar {{ grid-template-columns: 1fr; }}
-                .telemetry-bar {{ position: static; margin-top: 18px; }}
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="shell">
-            <section class="hero">
-                <div class="hero-grid">
-                    <div>
-                        <div class="eyebrow">Prompt intelligence / live index</div>
-                        <div class="hero-badges">
-                            <span class="chip">User: {html.escape(username)}</span>
-                            <span class="chip">Session: {html.escape(app.state.session_id)}</span>
-                            <span class="chip">AI: {html.escape(provider.get("name", ""))}</span>
-                            <span class="chip">Models: {len(models) if models else 1}</span>
-                        </div>
-                        <h1>Signal desk for agent craft.</h1>
-                        <p>
-                            Панель собирает артефакты из RSS, GitHub, Habr и workspace, кладёт их в векторную БД,
-                            показывает цену AI-операций, помогает выбирать объекты для canvas и даёт экспорт в md/json/zip.
-                        </p>
-                        <div class="hero-badges">
-                            {render_badge(f"Artifacts {len(artifacts)}")}
-                            {render_badge(f"Alerts {len(alerts)}")}
-                            {render_badge(f"Vector {snapshot['vector_status']}")}
-                            {render_badge(f"Last sync {format_relative(snapshot['last_sync'])}")}
-                        </div>
-                        {render_toolbar(filters, sources, types)}
-                        <div class="controls">
-                            <button type="button" onclick="runAction('summary')">Summary</button>
-                            <button type="button" onclick="runAction('analysis')">Quick analysis</button>
-                            <button type="button" onclick="runAction('augment')">Augment</button>
-                            <button type="button" onclick="runAction('prune')">What to remove</button>
-                            <button type="button" onclick="previewCanvas()">Canvas preview</button>
-                            <button type="button" onclick="downloadCanvas()">Canvas archive</button>
-                            <button type="button" onclick="exportSelected('md')">Export md</button>
-                            <button type="button" onclick="exportSelected('json')">Export json</button>
-                            <button type="button" onclick="openPublishingStudio()">Publishing Studio</button>
-                            <a class="clear-link" href="/lite">Lite view</a>
-                        </div>
-                    </div>
-                    <div>
-                        <div class="mini-stats">
-                            <div class="stat-card">
-                                <div class="stat-label">Total tokens</div>
-                                <div class="stat-value">{snapshot['tokens_total']}</div>
-                                <div class="stat-note">Limit {snapshot['token_limit']}</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-label">Remaining</div>
-                                <div class="stat-value">{snapshot['remaining_tokens']}</div>
-                                <div class="stat-note">${snapshot['remaining_usd']} budget left</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-label">Session</div>
-                                <div class="stat-value">{snapshot['session_tokens']}</div>
-                                <div class="stat-note">Period {snapshot['period_tokens']}</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-label">Index</div>
-                                <div class="stat-value">{snapshot['indexed_artifacts']}</div>
-                                <div class="stat-note">{snapshot['vector_status']} / sync {format_relative(snapshot['last_sync'])}</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
 
-            <div class="dashboard-grid">
-                <aside>
-                    {render_source_form()}
-                    {render_provider_panel(provider, models)}
-                    <div class="panel">
-                        <h2>Sources / presets <span class="muted">{len(sources)}</span></h2>
-                        <div class="source-list">{source_html}</div>
-                    </div>
-                    <div class="panel">
-                        <h2>Signals</h2>
-                        {alerts_html}
-                    </div>
-                </aside>
-
-                <main>
-                    <div class="section-title">
-                        <div>
-                            <h2>Artifacts</h2>
-                            <p>Комбинируйте поиск, фильтры и semantic query. Выбранные карточки можно экспортировать или собрать в canvas.</p>
-                        </div>
-                        <div class="chip selected-badge">Selected: <span id="selectedCount">0</span></div>
-                    </div>
-                    <div class="artifact-grid" id="artifactGrid">
-                        {artifacts_html}
-                    </div>
-                </main>
-            </div>
-        </div>
-
-        {render_telemetry_bar(snapshot)}
-        <dialog id="resultDialog">
-            <div class="dialog-head"><strong id="resultTitle">Result</strong><button onclick="document.getElementById('resultDialog').close()">close</button></div>
-            <pre id="resultBody"></pre>
-        </dialog>
-
-        <script>
-            let selectedIds = new Set();
-
-            function syncSelection() {{
-                selectedIds = new Set(Array.from(document.querySelectorAll('.artifact-select:checked')).map((item) => item.value));
-                document.getElementById('selectedCount').textContent = String(selectedIds.size);
-            }}
-
-            function selectedArray() {{
-                return Array.from(selectedIds);
-            }}
-
-            async function requestJson(url, payload, method = 'POST') {{
-                const response = await fetch(url, {{
-                    method,
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify(payload),
-                }});
-                if (!response.ok) {{
-                    throw new Error(await response.text());
-                }}
-                return response;
-            }}
-
-            function providerPayload() {{
-                return {{
-                    name: document.getElementById('providerName').value,
-                    kind: document.getElementById('providerKind').value,
-                    base_url: document.getElementById('providerBaseUrl').value,
-                    api_key: document.getElementById('providerApiKey').value,
-                    model: document.getElementById('providerModel').value,
-                    monthly_token_limit: Number(document.getElementById('providerTokenLimit').value || 0),
-                    monthly_budget_usd: Number(document.getElementById('providerBudget').value || 0),
-                    input_price_per_1m: Number(document.getElementById('providerInputPrice').value || 0),
-                    output_price_per_1m: Number(document.getElementById('providerOutputPrice').value || 0),
-                }};
-            }}
-
-            async function saveProvider(reload = true) {{
-                await requestJson('/api/provider/select', providerPayload());
-                if (reload) window.location.reload();
-            }}
-
-            async function loadModels() {{
-                await saveProvider(false);
-                const response = await fetch('/api/provider/models');
-                if (!response.ok) {{
-                    alert('Could not load models');
-                    return;
-                }}
-                const data = await response.json();
-                const select = document.getElementById('providerModel');
-                select.innerHTML = '';
-                (data.items || []).forEach((model) => {{
-                    const option = document.createElement('option');
-                    option.value = model;
-                    option.textContent = model;
-                    select.appendChild(option);
-                }});
-                if (!select.value && select.options.length) {{
-                    select.value = select.options[0].value;
-                }}
-            }}
-
-            async function addSource() {{
-                const payload = {{
-                    name: document.getElementById('newSourceName').value,
-                    kind: document.getElementById('newSourceKind').value,
-                    url: document.getElementById('newSourceUrl').value,
-                    repo: document.getElementById('newSourceRepo').value,
-                    branch: document.getElementById('newSourceBranch').value,
-                    recommended_interval_seconds: Number(document.getElementById('newSourceInterval').value || 3600),
-                    cadence_reason: document.getElementById('newSourceReason').value,
-                    enabled: document.getElementById('newSourceEnabled').checked,
-                }};
-                await requestJson('/api/sources', payload);
-                window.location.reload();
-            }}
-
-            async function saveSourceInterval(sourceId) {{
-                const input = document.querySelector(`[data-source-interval="${{sourceId}}"]`);
-                const payload = {{ manual_interval_seconds: Number(input.value || 0) }};
-                await requestJson(`/api/sources/${{sourceId}}`, payload, 'PATCH');
-                window.location.reload();
-            }}
-
-            async function toggleSourceEnabled(sourceId, enabled) {{
-                await requestJson(`/api/sources/${{sourceId}}`, {{ enabled }}, 'PATCH');
-                window.location.reload();
-            }}
-
-            async function toggleSourcePaused(sourceId, paused) {{
-                await requestJson(`/api/sources/${{sourceId}}`, {{ paused: !paused }}, 'PATCH');
-                window.location.reload();
-            }}
-
-            async function deleteSource(sourceId) {{
-                if (!confirm('Delete this source?')) return;
-                const response = await fetch(`/api/sources/${{sourceId}}`, {{ method: 'DELETE' }});
-                if (!response.ok) {{
-                    alert('Delete failed');
-                    return;
-                }}
-                window.location.reload();
-            }}
-
-            async function exportSelected(format) {{
-                const response = await requestJson('/api/export', {{ format, ids: selectedArray() }});
-                const blob = await response.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = format === 'json' ? 'promptops-export.json' : 'promptops-export.md';
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                URL.revokeObjectURL(url);
-            }}
-
-            function openPublishingStudio() {{
-                const first = selectedArray()[0] || '';
-                window.location.href = first ? `/studio?artifact_id=${{encodeURIComponent(first)}}` : '/studio';
-            }}
-
-            function showResult(title, value) {{
-                document.getElementById('resultTitle').textContent = title;
-                document.getElementById('resultBody').textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-                document.getElementById('resultDialog').showModal();
-            }}
-
-            async function previewCanvas() {{
-                const response = await requestJson('/api/canvas/preview', {{ ids: selectedArray() }});
-                const data = await response.json();
-                showResult('Canvas preview', data.canvas || data);
-            }}
-
-            async function downloadCanvas() {{
-                const response = await requestJson('/api/canvas/archive', {{ ids: selectedArray() }});
-                const blob = await response.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'canvas.zip';
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                URL.revokeObjectURL(url);
-            }}
-
-            async function runAction(action) {{
-                const response = await requestJson('/api/ai/action', {{ action, ids: selectedArray() }});
-                const data = await response.json();
-                showResult(action, data.result);
-            }}
-
-            document.querySelectorAll('.artifact-select').forEach((checkbox) => {{
-                checkbox.addEventListener('change', syncSelection);
-            }});
-            syncSelection();
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=page)
+    artifact_rows = "".join(render_artifact_card(item) for item in artifacts) or '<div class="empty">NO_ARTIFACTS // adjust filters or wait for sync</div>'
+    healthy_sources = [source for source in sources if source.get("state") != "error"]
+    error_sources = [source for source in sources if source.get("state") == "error"]
+    source_rows = "".join(render_source_card(source) for source in healthy_sources) or '<div class="empty">NO_ACTIVE_SOURCES</div>'
+    if error_sources:
+        source_errors = f'<details class="error-log"><summary>ERROR_LOG [{len(error_sources)}]</summary>{"".join(render_source_card(source) for source in error_sources)}</details>'
+    else:
+        source_errors = '<details class="error-log"><summary>ERROR_LOG [0]</summary></details>'
+    alert_rows = "".join(
+        f'<div class="signal-row"><strong>{html.escape(item.get("type", "signal"))}</strong><span>{html.escape(item.get("summary", ""))}</span></div>'
+        for item in alerts[:8]
+    ) or '<div class="signal-row"><strong>signals</strong><span>quiet</span></div>'
+    artifact_json = json.dumps(artifacts, ensure_ascii=False, separators=(",", ":")).replace("<", "\u003c")
+    template = (Path(__file__).resolve().parent / "dashboard" / "index.html").read_text(encoding="utf-8")
+    replacements = {
+        "__USER__": html.escape(username),
+        "__SESSION__": html.escape(app.state.session_id[:12]),
+        "__PROVIDER__": html.escape(str(provider.get("name", "-"))),
+        "__MODEL__": html.escape(str(provider.get("model", "-"))),
+        "__TOKENS_TOTAL__": str(snapshot["tokens_total"]),
+        "__BUDGET_LEFT__": str(snapshot["remaining_usd"]),
+        "__VECTOR_STATUS__": html.escape(snapshot["vector_status"]),
+        "__LAST_SYNC__": html.escape(format_relative(snapshot["last_sync"])),
+        "__SOURCE_COUNT__": str(len(sources)),
+        "__ARTIFACT_COUNT__": str(len(artifacts)),
+        "__INDEXED_COUNT__": str(snapshot["indexed_artifacts"]),
+        "__SOURCE_ROWS__": source_rows,
+        "__SOURCE_ERRORS__": source_errors,
+        "__ALERT_ROWS__": alert_rows,
+        "__FILTER_BAR__": render_toolbar(filters, sources, sorted({item.get("type", "") for item in artifacts if item.get("type")})),
+        "__ARTIFACT_ROWS__": artifact_rows,
+        "__ARTIFACT_JSON__": artifact_json,
+        "__SOURCE_FORM__": render_source_form(),
+        "__PROVIDER_PANEL__": render_provider_panel(provider, models),
+    }
+    for token, value in replacements.items():
+        template = template.replace(token, value)
+    return HTMLResponse(content=template)
 
 
 @asynccontextmanager
