@@ -199,6 +199,14 @@ def test_prompt_mechanics_and_token_estimate_are_structured_without_references()
     assert estimate["input"]["max"] > estimate["input"]["min"]
     assert estimate["total"]["max"] == estimate["input"]["max"] + estimate["output"]["max"]
     assert "references" not in mechanics
+    script = prompt_mechanics(
+        "UGC-Style TikTok Script Generator",
+        "Create a TikTok script and organize scenes in a table with hook, dialogue, visual, and CTA.",
+        70,
+    )
+    assert "сценарий короткого видео" in script["how_it_works"]
+    assert "готовый сценарий" in script["expected_output"]
+    assert "аналитическая таблица" not in script["expected_output"]
 
 
 

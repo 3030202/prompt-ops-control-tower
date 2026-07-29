@@ -816,6 +816,8 @@ def prompt_tags(title: str, body: str, category: str, source_tags: list[Any] | N
         (("video", "veo", "sora", "shot list"), ["video-generation", "shot-planning"]),
         (("notebooklm", "audio overview"), ["notebooklm-workflow", "source-grounded-learning"]),
         (("distill", "compress the prompt", "сожми промпт"), ["prompt-distillation", "context-compression"]),
+        (("tiktok", "reels", "short-form video"), ["short-form-video-script", "audience-engagement"]),
+        (("script generator", "write a script", "screenplay", "сценарий"), ["script-generation", "narrative-structure"]),
         (("write code", "generate code", "implement", "напиши код", "реализуй"), ["code-generation", "implementation-planning"]),
     ]
     specific: list[str] = []
@@ -907,7 +909,7 @@ def prompt_token_estimate(body: str, expected_output: str = "") -> dict[str, Any
         output_min, output_max = 600, 2600
     elif any(token in lowered for token in ["image", "midjourney", "flux", "dall-e"]):
         output_min, output_max = 100, 450
-    elif any(token in lowered for token in ["video", "veo", "sora", "shot list"]):
+    elif any(token in lowered for token in ["video", "veo", "sora", "shot list", "tiktok", "reels", "script generator", "screenplay"]):
         output_min, output_max = 350, 1400
     elif any(token in lowered for token in ["summar", "summary", "сводк", "резюме"]):
         output_min, output_max = 250, 900
@@ -989,6 +991,9 @@ def prompt_mechanics(title: str, body: str, complexity: int | None = None) -> di
     elif any(token in lowered for token in ["storyboard", "storyboarding", "shot grid"]):
         operation = "Преобразует исходную идею или изображение в последовательность связанных кадров для раскадровки"
         coverage = ["последовательность кадров", "композиция", "действие", "визуальная связность"]
+    elif any(token in lowered for token in ["tiktok", "reels", "short-form video", "script generator", "write a script", "screenplay", "сценарий"]):
+        operation = "Генерирует сценарий короткого видео: выстраивает хук, последовательность сцен, реплики, визуальные подсказки и финальный призыв к действию"
+        coverage = ["хук", "сцены и реплики", "визуальная подача", "призыв к действию"]
     elif any(token in lowered for token in ["style guide", "writing style", "tone of voice"]):
         operation = "Формализует правила стиля, тона и подачи, чтобы последующие материалы сохраняли единый голос"
         coverage = ["тон", "лексика", "структура", "разрешённые и запрещённые приёмы"]
@@ -1046,6 +1051,8 @@ def prompt_mechanics(title: str, body: str, complexity: int | None = None) -> di
         output = "название обнаруженного языка или его стандартизированный языковой код"
     elif any(token in lowered for token in ["storyboard", "storyboarding", "shot grid"]):
         output = "последовательная раскадровка с описанием композиции и действия в каждом кадре"
+    elif any(token in lowered for token in ["tiktok", "reels", "short-form video", "script generator", "write a script", "screenplay", "сценарий"]):
+        output = "готовый сценарий короткого видео с хуком, сценами, репликами, визуальными подсказками и CTA"
     elif "json" in lowered:
         output = "структурированный JSON, пригодный для дальнейшей машинной обработки"
     elif any(token in lowered for token in ["yaml", "xml"]):
