@@ -42,6 +42,7 @@ services:
         max-file: "3"
 
   cloudflared:
+    profiles: ["tunnel"]
     image: cloudflare/cloudflared:latest
     container_name: promptops_cloudflared
     restart: unless-stopped

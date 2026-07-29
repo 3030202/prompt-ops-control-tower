@@ -46,7 +46,8 @@ Live отправляет короткий flash. Длинные материа�
 
 1. Создайте named tunnel и направьте public hostname на `http://osint-radar:8000`.
 2. Сохраните tunnel token в `secrets/cloudflare_tunnel_token` без завершающих пробелов.
-3. Запустите `docker compose up -d cloudflared`.
+3. Назначьте файл UID официального image: `sudo chown 65532:65532 secrets/cloudflare_tunnel_token && sudo chmod 600 secrets/cloudflare_tunnel_token`.
+4. Запустите production-профиль: `docker compose --profile tunnel up -d --build`.
 
 Папка `secrets/` исключена из Git и Docker build context. Основной dashboard остаётся под HTTP Basic, а `/lite` доступен публично.
 
