@@ -827,6 +827,56 @@ def extract_prompt_body(raw_text: str) -> str:
     return candidate[:MAX_PROMPT_BODY_CHARS]
 
 
+def prompt_mechanics_description(title: str, body: str) -> str:
+    lowered = body.lower()
+    methods = []
+    reasons = []
+
+    if any(token in lowered for token in ["you are", "act as", "ты —", "роль:", "role:"]):
+        methods.append(f"задаёт модели ролевую рамку «{title}»")
+        reasons.append("роль сужает допустимый тон, знания и способ рассуждения")
+    else:
+        methods.append("формулирует прямую задачу и рабочий контекст")
+        reasons.append("явная цель уменьшает неоднозначность запроса")
+
+    if re.search(r"\{\{?[_A-Za-z][^}\n]*\}\}?|\$\{[^}\n]+\}|<[_A-Za-z][^>\n]*>", body):
+        methods.append("оставляет переменные для подстановки контекста")
+        reasons.append("шаблон можно переиспользовать без изменения основной логики")
+    if any(token in lowered for token in ["must", "never", "only", "constraint", "обязательно", "только", "запрещено"]):
+        methods.append("фиксирует ограничения")
+        reasons.append("ограничения отсекают нежелательные варианты ответа")
+    if any(token in lowered for token in ["example", "for example", "например", "input:", "output:"]):
+        methods.append("показывает образец или стартовый сценарий")
+        reasons.append("пример закрепляет ожидаемый паттерн продолжения")
+
+    if "json" in lowered:
+        output = "структурированный JSON, пригодный для дальнейшей машинной обработки"
+    elif any(token in lowered for token in ["yaml", "xml"]):
+        output = "структурированные данные в явно заданном формате"
+    elif any(token in lowered for token in ["translate", "translation", "translator", "переведи", "перевод"]):
+        output = "переведённый и адаптированный текст с сохранением исходного смысла"
+    elif any(token in lowered for token in ["summarize", "summary", "synopsis", "резюме", "сводк", "краткое содержание"]):
+        output = "сжатая сводка с основными тезисами исходного материала"
+    elif any(token in lowered for token in ["analyze", "analysis", "audit", "проанализ", "анализ", "аудит"]):
+        output = "структурированный аналитический разбор с выводами"
+    elif "markdown" in lowered:
+        output = "оформленный Markdown-документ"
+    elif any(token in lowered for token in ["image", "midjourney", "flux", "dall-e", "stable diffusion"]):
+        output = "описание или спецификация изображения в заданной стилистике"
+    elif any(token in lowered for token in ["video", "veo", "sora", "camera movement", "shot list"]):
+        output = "сценарий, shot list или спецификация видеогенерации"
+    elif any(token in lowered for token in ["write code", "generate code", "implement code", "create a function", "write a script", "напиши код", "реализуй функцию", "создай скрипт"]):
+        output = "код или техническая реализация с заданными требованиями"
+    elif any(token in lowered for token in ["table", "таблиц"]):
+        output = "сравнительная или аналитическая таблица"
+    else:
+        output = f"контекстный ответ в логике роли «{title}»"
+
+    how = "; ".join(methods[:3])
+    why = "; ".join(reasons[:3])
+    return f"Как работает: {how}. Почему работает: {why}. На выходе: {output}."[:500]
+
+
 def prompt_literacy_score(body: str) -> int:
     lowered = body.lower()
     score = 42
@@ -900,11 +950,13 @@ def build_prompt_projection(record: dict[str, Any], analysis: dict[str, Any] | N
     literacy = int(clamp(int(analysis.get("literacy_score", record.get("literacy_score", prompt_literacy_score(body)))), 1, 100))
     marks = list(dict.fromkeys(analysis.get("special_marks") or record.get("special_marks") or prompt_special_marks(body, category)))[:8]
     remarks = list(dict.fromkeys(analysis.get("remarks") or record.get("remarks") or prompt_remarks(body)))[:6]
+    title = str(analysis.get("prompt_title") or record.get("title") or "Untitled prompt")[:160]
+    description = str(analysis.get("description") or prompt_mechanics_description(title, body))[:500]
     return {
         "id": record.get("id"),
-        "title": str(analysis.get("prompt_title") or record.get("title") or "Untitled prompt")[:160],
+        "title": title,
         "prompt_body": body[:MAX_PROMPT_BODY_CHARS],
-        "description": str(analysis.get("description") or record.get("summary") or make_summary_from_text(body))[:500],
+        "description": description,
         "tags": tags,
         "complexity": complexity,
         "literacy_score": literacy,
@@ -1406,7 +1458,8 @@ def provider_messages(action: str, text: str, records: list[dict[str, Any]] | No
     elif action == "analysis":
         system = (
             "Ты проводишь экспресс-анализ артефакта. Верни только JSON: "
-            '{"summary":"...","killer_feature":"...","should_disappear":"...","tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."],"is_prompt":true,"prompt_title":"...","prompt_body":"...","description":"...","literacy_score":0,"special_marks":["..."],"remarks":["..."]}'
+            '{"summary":"...","killer_feature":"...","should_disappear":"...","tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."],"is_prompt":true,"prompt_title":"...","prompt_body":"...","description":"Как работает: ... Почему работает: ... На выходе: ...","literacy_score":0,"special_marks":["..."],"remarks":["..."]}'
+            " Поле description не пересказывает назначение промпта: объясни его механику, почему конструкция направляет модель и какой конкретный формат или тип результата получится."
             " Если вход не содержит самостоятельного применимого промпта, поставь is_prompt=false и prompt_body пустым."
         )
         user = text
@@ -1580,8 +1633,16 @@ async def backfill_prompt_catalog() -> None:
     for record in records:
         if await store_prompt_projection(record):
             stored += 1
-    if stored:
-        logging.info("Backfilled %s normalized prompts", stored)
+
+    prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
+    description_updates = {}
+    for prompt in prompts:
+        prompt["description"] = prompt_mechanics_description(prompt.get("title", "Untitled prompt"), prompt.get("prompt_body", ""))
+        description_updates[str(prompt["id"])] = json.dumps(prompt, ensure_ascii=False)
+    if description_updates:
+        await app.state.redis.hset(PROMPTS_HASH_KEY, mapping=description_updates)
+    if stored or description_updates:
+        logging.info("Backfilled %s prompts and refreshed %s descriptions", stored, len(description_updates))
 
 
 async def store_artifact(record: dict[str, Any]) -> None:
@@ -1618,7 +1679,7 @@ async def process_item(item: dict[str, Any], function_name: str = "ingest") -> d
         title = str(item.get("title") or "Untitled prompt")
         analysis.update({
             "category": "Prompt",
-            "summary": f"Промпт задаёт модели роль «{title}» и описывает ожидаемый сценарий работы.",
+            "summary": prompt_mechanics_description(title, raw),
             "tags": derive_tags("", f"{title}\n{raw}", "Prompt"),
             "complexity": derive_complexity("Prompt", raw),
             "is_prompt": True,

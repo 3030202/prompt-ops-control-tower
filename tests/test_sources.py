@@ -9,6 +9,7 @@ from prompt_ops_app import (
     extract_prompt_body,
     fetch_x_search_items,
     prompt_literacy_score,
+    prompt_mechanics_description,
     public_prompt_item,
     source_artifact_group,
 )
@@ -127,3 +128,25 @@ def test_public_prompt_item_is_a_strict_allowlist():
     }
     assert extract_prompt_body("Title: Ignore\n```\nAct as an editor and return only JSON.\n```") == "Act as an editor and return only JSON."
     assert prompt_literacy_score(public["prompt_body"]) > 40
+
+
+def test_prompt_description_explains_mechanics_reason_and_output():
+    description = prompt_mechanics_description(
+        "Product researcher",
+        "You are a product researcher. Compare {a} and {b}. Return only JSON. Never invent facts.",
+    )
+    assert description.startswith("Как работает:")
+    assert "Почему работает:" in description
+    assert "На выходе:" in description
+    assert "JSON" in description
+    assert "переменн" in description
+    assert "ограничен" in description
+
+
+def test_prompt_output_intent_avoids_code_keyword_false_positive():
+    description = prompt_mechanics_description(
+        "Translation assistant",
+        "Act as a translator. Translate the synopsis and preserve the language code metadata.",
+    )
+    assert "переведённый и адаптированный текст" in description
+    assert "техническая реализация" not in description
