@@ -59,14 +59,19 @@ async def prompt_hostname_router(request: Request, call_next: Any) -> Response:
         if path == "/":
             request.scope["path"] = "/prompts"
             request.scope["raw_path"] = b"/prompts"
-        elif path not in {"/health", "/api/prompts"}:
-            return JSONResponse({"detail": "Prompt-only surface"}, status_code=404)
+        else:
+            public_get = request.method == "GET" and (path == "/health" or path == "/api/prompts" or re.fullmatch(r"/api/prompts/P-\d{6}", path))
+            public_export = request.method == "POST" and path == "/api/prompts/export"
+            protected_analysis = request.method == "POST" and path == "/api/prompts/analyze"
+            if not (public_get or public_export or protected_analysis):
+                return JSONResponse({"detail": "Prompt-only surface"}, status_code=404)
     return await call_next(request)
 
 ARTIFACTS_KEY = "promptops:artifacts:recent"
 PROMPTS_HASH_KEY = "promptops:prompts:items"
 PROMPTS_ORDER_KEY = "promptops:prompts:order"
 PROMPTS_SERIAL_KEY = "promptops:prompts:serial"
+PROMPTS_SERIAL_INDEX_KEY = "promptops:prompts:serial-index"
 ALERTS_KEY = "promptops:alerts:recent"
 SOURCE_CATALOG_KEY = "promptops:sources:catalog"
 SOURCE_DELETED_KEY = "promptops:sources:deleted"
@@ -777,6 +782,149 @@ def derive_tags(path: str, text: str, category: str) -> list[str]:
     return list(dict.fromkeys(tags))[:10]
 
 
+def normalize_prompt_tag(value: Any) -> str:
+    aliases = {
+        "system": "system-prompt",
+        "image": "image-generation",
+        "video": "video-generation",
+        "json": "structured-output",
+        "analysis": "analytical-reasoning",
+        "research": "research-workflow",
+        "translation": "translation-workflow",
+    }
+    raw = str(value or "").strip().lower().replace("_", "-")
+    tag = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")[:40]
+    if not tag or len(tag) < 2:
+        return ""
+    return aliases.get(tag, tag)
+
+
+def prompt_tags(title: str, body: str, category: str, source_tags: list[Any] | None = None) -> tuple[list[str], str]:
+    """Return 3-5 English tags, prioritising reusable and narrow task labels."""
+    text = f"{title}\n{body}".lower()
+    raw_source_tags = source_tags if isinstance(source_tags, list) else []
+    source = list(dict.fromkeys(filter(None, (normalize_prompt_tag(tag) for tag in raw_source_tags))))
+    specific_rules = [
+        (("faq", "frequently asked"), ["faq-generation", "question-coverage"]),
+        (("code review", "review code", "ревью кода"), ["code-review", "defect-detection"]),
+        (("compare", "comparison", "сравни"), ["comparative-analysis", "decision-support"]),
+        (("summar", "сводк", "резюме"), ["content-summarization", "key-point-extraction"]),
+        (("translat", "перевод"), ["translation-workflow", "meaning-preservation"]),
+        (("audit", "аудит"), ["structured-audit", "risk-identification"]),
+        (("research", "исслед"), ["research-synthesis", "evidence-analysis"]),
+        (("image", "midjourney", "flux", "dall-e"), ["image-generation", "visual-direction"]),
+        (("video", "veo", "sora", "shot list"), ["video-generation", "shot-planning"]),
+        (("notebooklm", "audio overview"), ["notebooklm-workflow", "source-grounded-learning"]),
+        (("distill", "compress the prompt", "сожми промпт"), ["prompt-distillation", "context-compression"]),
+        (("write code", "generate code", "implement", "напиши код", "реализуй"), ["code-generation", "implementation-planning"]),
+    ]
+    specific: list[str] = []
+    for needles, candidates in specific_rules:
+        if any(needle in text for needle in needles):
+            specific.extend(candidates)
+            break
+
+    if not specific:
+        stop_words = {
+            "a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with",
+            "act", "assistant", "create", "creating", "generate", "generator", "prompt", "tool", "using",
+        }
+        title_words = [word for word in re.findall(r"[a-z0-9]+", title.lower()) if word not in stop_words and len(word) > 1]
+        title_tag = normalize_prompt_tag("-".join(title_words[:3]))
+        if title_tag:
+            specific.append(title_tag)
+
+    category_tags = {
+        "System Prompt": ["system-prompt", "behavior-control"],
+        "Image Prompt": ["image-generation", "visual-prompting"],
+        "Video Prompt": ["video-generation", "motion-prompting"],
+        "NotebookLM": ["notebooklm-workflow", "source-grounding"],
+        "Distillate": ["prompt-distillation", "context-compression"],
+        "Prompt": ["prompt-engineering", "task-instruction"],
+    }.get(category, ["prompt-engineering", "task-instruction"])
+    structural = []
+    if re.search(r"\{\{?[_A-Za-z][^}\n]*\}\}?|\$\{[^}\n]+\}|<[_A-Za-z][^>\n]*>", body):
+        structural.append("reusable-template")
+    if any(token in text for token in ["json", "yaml", "xml", "markdown", "output format"]):
+        structural.append("structured-output")
+    if any(token in text for token in ["must", "never", "only", "constraint", "обязательно", "запрещено"]):
+        structural.append("constraint-driven")
+    if any(token in text for token in ["you are", "act as", "role:", "ты —", "роль:"]):
+        structural.append("role-prompting")
+    if any(token in text for token in ["step by step", "workflow", "pipeline", "по шагам"]):
+        structural.append("multi-step-workflow")
+
+    generated = list(dict.fromkeys(specific[:2] + category_tags + structural))
+    tags = list(dict.fromkeys(specific[:2] + source + generated))
+    fallbacks = ["prompt-engineering", "task-instruction", "response-design", "llm-workflow"]
+    for tag in fallbacks:
+        if len(tags) >= 3:
+            break
+        if tag not in tags:
+            tags.append(tag)
+    tags = tags[:5]
+    used_generated = any(tag not in source for tag in tags)
+    origin = "mixed" if source and used_generated else "source" if source else "generated"
+    return tags, origin
+
+
+def nonnegative_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def prompt_text_list(value: Any, fallback: list[Any], limit: int = 8) -> list[str]:
+    values = value if isinstance(value, list) else fallback
+    return [normalize_ws(str(item))[:160] for item in values if normalize_ws(str(item))][:limit]
+
+
+def prompt_learning_complexity(value: Any, fallback: dict[str, Any]) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else fallback
+    level = str(raw.get("level", fallback.get("level", "средняя"))).lower()
+    if level not in {"низкая", "средняя", "высокая"}:
+        level = str(fallback.get("level", "средняя"))
+    try:
+        score = int(clamp(int(raw.get("score", fallback.get("score", 50))), 1, 100))
+    except (TypeError, ValueError):
+        score = int(fallback.get("score", 50))
+    reason = normalize_ws(str(raw.get("reason", fallback.get("reason", ""))))[:300]
+    return {"level": level, "score": score, "reason": reason}
+
+
+def prompt_token_estimate(body: str, expected_output: str = "") -> dict[str, Any]:
+    base = estimate_tokens(body)
+    placeholders = len(re.findall(r"\{\{?[^}\n]+\}\}?|\$\{[^}\n]+\}|<[_A-Za-z][^>\n]*>", body))
+    input_min = max(1, base + placeholders * 6)
+    input_max = max(input_min, base + placeholders * 60 + 24)
+    lowered = f"{body}\n{expected_output}".lower()
+    if any(token in lowered for token in ["language detection", "название языка", "языковой код"]):
+        output_min, output_max = 5, 30
+    elif any(token in lowered for token in ["faq", "frequently asked"]):
+        output_min, output_max = 800, 2200
+    elif any(token in lowered for token in ["write code", "generate code", "implement", "код", "реализ"]):
+        output_min, output_max = 600, 2600
+    elif any(token in lowered for token in ["image", "midjourney", "flux", "dall-e"]):
+        output_min, output_max = 100, 450
+    elif any(token in lowered for token in ["video", "veo", "sora", "shot list"]):
+        output_min, output_max = 350, 1400
+    elif any(token in lowered for token in ["summar", "summary", "сводк", "резюме"]):
+        output_min, output_max = 250, 900
+    elif any(token in lowered for token in ["report", "research", "audit", "отчёт", "исслед", "аудит"]):
+        output_min, output_max = 800, 2800
+    elif "json" in lowered:
+        output_min, output_max = 350, 1400
+    else:
+        output_min, output_max = 300, 1200
+    return {
+        "input": {"min": input_min, "max": input_max},
+        "output": {"min": output_min, "max": output_max},
+        "total": {"min": input_min + output_min, "max": input_max + output_max},
+        "method": "heuristic-v1",
+    }
+
+
 def derive_complexity(category: str, text: str) -> int:
     base = {"Prompt": 65, "System Prompt": 68, "Image Prompt": 62, "Video Prompt": 68, "NotebookLM": 66, "Distillate": 72, "Pipeline": 70, "Instruction": 52, "Skill": 76, "Agent": 68, "Rule": 58}.get(category, 18)
     base += min(25, len(text) // 120)
@@ -827,29 +975,78 @@ def extract_prompt_body(raw_text: str) -> str:
     return candidate[:MAX_PROMPT_BODY_CHARS]
 
 
-def prompt_mechanics_description(title: str, body: str) -> str:
-    lowered = body.lower()
+def prompt_mechanics(title: str, body: str, complexity: int | None = None) -> dict[str, Any]:
+    lowered = f"{title}\n{body}".lower()
     methods = []
     reasons = []
 
+    if any(token in lowered for token in ["faq", "frequently asked"]):
+        operation = "Генерирует FAQ для указанного продукта, сервиса, объекта, компании или мероприятия и распределяет вопросы по смысловым разделам"
+        coverage = ["основные возможности", "использование", "ограничения", "типичные вопросы"]
+    elif any(token in lowered for token in ["language detection", "detect language", "определи язык"]):
+        operation = "Определяет язык переданного текста и возвращает название языка либо стандартизированный языковой код"
+        coverage = ["основной язык", "языковой код", "смешанный текст", "уверенность определения"]
+    elif any(token in lowered for token in ["storyboard", "storyboarding", "shot grid"]):
+        operation = "Преобразует исходную идею или изображение в последовательность связанных кадров для раскадровки"
+        coverage = ["последовательность кадров", "композиция", "действие", "визуальная связность"]
+    elif any(token in lowered for token in ["style guide", "writing style", "tone of voice"]):
+        operation = "Формализует правила стиля, тона и подачи, чтобы последующие материалы сохраняли единый голос"
+        coverage = ["тон", "лексика", "структура", "разрешённые и запрещённые приёмы"]
+    elif any(token in lowered for token in ["compare", "comparison", "сравни"]):
+        operation = "Сопоставляет указанные сущности по заданным критериям, выявляет различия и помогает выбрать подходящий вариант"
+        coverage = ["критерии сравнения", "сильные стороны", "ограничения", "итоговый выбор"]
+    elif any(token in lowered for token in ["summar", "summary", "сводк", "резюме"]):
+        operation = "Сжимает исходный материал, выделяет главные тезисы и отбрасывает второстепенные повторы"
+        coverage = ["ключевые тезисы", "аргументы", "выводы", "пробелы контекста"]
+    elif any(token in lowered for token in ["translat", "перевод"]):
+        operation = "Переводит исходный материал, сохраняя смысл, терминологию, структуру и требуемый тон"
+        coverage = ["смысл", "терминология", "тон", "форматирование"]
+    elif any(token in lowered for token in ["audit", "analy", "аудит", "анализ", "проанализ"]):
+        operation = "Разбирает входные данные по критериям, находит закономерности, риски и формирует проверяемые выводы"
+        coverage = ["факты", "риски", "аномалии", "рекомендации"]
+    elif any(token in lowered for token in ["write code", "generate code", "implement", "напиши код", "реализуй"]):
+        operation = "Преобразует требования в план реализации и генерирует код с учётом ограничений и ожидаемого интерфейса"
+        coverage = ["требования", "архитектура", "реализация", "проверка результата"]
+    elif any(token in lowered for token in ["image", "midjourney", "flux", "dall-e"]):
+        operation = "Собирает визуальную спецификацию: объект, композицию, стиль, свет, ракурс и ограничения изображения"
+        coverage = ["сюжет", "композиция", "стиль", "свет и камера"]
+    elif any(token in lowered for token in ["video", "veo", "sora", "shot list"]):
+        operation = "Собирает видеоспецификацию: сцену, последовательность действий, движение камеры, ритм и визуальный стиль"
+        coverage = ["сцена", "движение", "камера", "монтажный ритм"]
+    elif "notebooklm" in lowered:
+        operation = "Управляет обработкой загруженных источников в NotebookLM и задаёт форму учебного или аналитического результата"
+        coverage = ["источники", "основные темы", "связи между материалами", "учебный результат"]
+    elif any(token in lowered for token in ["distill", "compress the prompt", "сожми промпт"]):
+        operation = "Сокращает исходный промпт, сохраняя его обязательные правила, рабочую логику и формат результата"
+        coverage = ["цель", "ограничения", "ключевые инструкции", "формат выхода"]
+    else:
+        operation = f"Выполняет операцию «{title}»: принимает пользовательский контекст, последовательно обрабатывает его по инструкции и формирует требуемый результат"
+        coverage = ["рабочий контекст", "основная задача", "ограничения", "формат результата"]
+
     if any(token in lowered for token in ["you are", "act as", "ты —", "роль:", "role:"]):
-        methods.append(f"задаёт модели ролевую рамку «{title}»")
+        methods.append("назначает модели специализированную роль")
         reasons.append("роль сужает допустимый тон, знания и способ рассуждения")
     else:
         methods.append("формулирует прямую задачу и рабочий контекст")
         reasons.append("явная цель уменьшает неоднозначность запроса")
 
     if re.search(r"\{\{?[_A-Za-z][^}\n]*\}\}?|\$\{[^}\n]+\}|<[_A-Za-z][^>\n]*>", body):
-        methods.append("оставляет переменные для подстановки контекста")
+        methods.append("подставляет пользовательский контекст через переменные")
         reasons.append("шаблон можно переиспользовать без изменения основной логики")
     if any(token in lowered for token in ["must", "never", "only", "constraint", "обязательно", "только", "запрещено"]):
-        methods.append("фиксирует ограничения")
+        methods.append("проверяет результат по явно заданным ограничениям")
         reasons.append("ограничения отсекают нежелательные варианты ответа")
     if any(token in lowered for token in ["example", "for example", "например", "input:", "output:"]):
-        methods.append("показывает образец или стартовый сценарий")
+        methods.append("сверяет ответ с примером")
         reasons.append("пример закрепляет ожидаемый паттерн продолжения")
 
-    if "json" in lowered:
+    if any(token in lowered for token in ["faq", "frequently asked"]):
+        output = "готовый FAQ, сгруппированный по темам и покрывающий основные вопросы выбранной сущности"
+    elif any(token in lowered for token in ["language detection", "detect language", "определи язык"]):
+        output = "название обнаруженного языка или его стандартизированный языковой код"
+    elif any(token in lowered for token in ["storyboard", "storyboarding", "shot grid"]):
+        output = "последовательная раскадровка с описанием композиции и действия в каждом кадре"
+    elif "json" in lowered:
         output = "структурированный JSON, пригодный для дальнейшей машинной обработки"
     elif any(token in lowered for token in ["yaml", "xml"]):
         output = "структурированные данные в явно заданном формате"
@@ -870,12 +1067,42 @@ def prompt_mechanics_description(title: str, body: str) -> str:
     elif any(token in lowered for token in ["table", "таблиц"]):
         output = "сравнительная или аналитическая таблица"
     else:
-        output = f"контекстный ответ в логике роли «{title}»"
+        output = f"контекстный ответ в логике задачи «{title}»"
 
-    how = "; ".join(methods[:3])
-    why = "; ".join(reasons[:3])
-    return f"Как работает: {how}. Почему работает: {why}. На выходе: {output}."[:500]
+    structure = ["контекст и роль", "основная операция"]
+    if re.search(r"\{\{?[_A-Za-z][^}\n]*\}\}?|\$\{[^}\n]+\}|<[_A-Za-z][^>\n]*>", body):
+        structure.append("переменные пользователя")
+    if any(token in lowered for token in ["must", "never", "only", "constraint", "обязательно", "только", "запрещено"]):
+        structure.append("ограничения и критерии")
+    if any(token in lowered for token in ["return", "output", "format", "верни", "формат"]):
+        structure.append("формат результата")
+    if any(token in lowered for token in ["example", "for example", "например", "input:", "output:"]):
+        structure.append("пример")
 
+    learning_score = int(complexity if complexity is not None else derive_complexity("Prompt", body))
+    level = "низкая" if learning_score < 45 else "средняя" if learning_score < 75 else "высокая"
+    learning_reason = (
+        "можно применять почти без настройки" if level == "низкая" else
+        "нужно заполнить контекст и проверить ограничения" if level == "средняя" else
+        "требует понимания многоэтапной структуры, переменных и формата выхода"
+    )
+    return {
+        "how_it_works": f"{operation}. Логика: {'; '.join(methods[:3])}.",
+        "why_it_works": "; ".join(reasons[:3]) + ".",
+        "structure": structure[:6],
+        "coverage": coverage[:6],
+        "expected_output": output,
+        "learning_complexity": {"level": level, "score": learning_score, "reason": learning_reason},
+    }
+
+
+def prompt_mechanics_description(title: str, body: str) -> str:
+    mechanics = prompt_mechanics(title, body)
+    return (
+        f"Как работает: {mechanics['how_it_works']} "
+        f"Почему работает: {mechanics['why_it_works']} "
+        f"На выходе: {mechanics['expected_output']}."
+    )[:1000]
 
 def prompt_literacy_score(body: str) -> int:
     lowered = body.lower()
@@ -945,19 +1172,39 @@ def build_prompt_projection(record: dict[str, Any], analysis: dict[str, Any] | N
     category = str(record.get("type") or analysis.get("category") or "Prompt")
     if not looks_like_prompt(category, body, analysis.get("is_prompt")):
         return None
-    tags = list(dict.fromkeys([str(tag).strip().lower() for tag in (analysis.get("tags") or record.get("tags", [])) if str(tag).strip()]))[:12]
     complexity = int(clamp(int(analysis.get("complexity", record.get("complexity", derive_complexity(category, body)))), 1, 100))
     literacy = int(clamp(int(analysis.get("literacy_score", record.get("literacy_score", prompt_literacy_score(body)))), 1, 100))
     marks = list(dict.fromkeys(analysis.get("special_marks") or record.get("special_marks") or prompt_special_marks(body, category)))[:8]
     remarks = list(dict.fromkeys(analysis.get("remarks") or record.get("remarks") or prompt_remarks(body)))[:6]
     title = str(analysis.get("prompt_title") or record.get("title") or "Untitled prompt")[:160]
-    description = str(analysis.get("description") or prompt_mechanics_description(title, body))[:500]
+    tags, tag_origin = prompt_tags(title, body, category, analysis.get("tags") or record.get("tags", []))
+    generated = prompt_mechanics(title, body, complexity)
+    mechanics = {
+        "how_it_works": str(analysis.get("how_it_works") or generated["how_it_works"])[:1000],
+        "why_it_works": str(analysis.get("why_it_works") or generated["why_it_works"])[:800],
+        "structure": prompt_text_list(analysis.get("structure"), generated["structure"]),
+        "coverage": prompt_text_list(analysis.get("coverage"), generated["coverage"]),
+        "expected_output": str(analysis.get("expected_output") or generated["expected_output"])[:500],
+        "learning_complexity": prompt_learning_complexity(analysis.get("learning_complexity"), generated["learning_complexity"]),
+    }
+    description = (
+        f"Как работает: {mechanics['how_it_works']} "
+        f"Почему работает: {mechanics['why_it_works']} "
+        f"На выходе: {mechanics['expected_output']}."
+    )[:1500]
+    description_origin = "source" if record.get("source_description") else "ai_enriched" if any(
+        analysis.get(key) for key in ["description", "how_it_works", "expected_output"]
+    ) else "reconstructed"
     return {
         "id": record.get("id"),
         "title": title,
         "prompt_body": body[:MAX_PROMPT_BODY_CHARS],
         "description": description,
+        **mechanics,
         "tags": tags,
+        "tag_origin": tag_origin,
+        "description_origin": description_origin,
+        "token_estimate": prompt_token_estimate(body, mechanics["expected_output"]),
         "complexity": complexity,
         "literacy_score": literacy,
         "special_marks": marks,
@@ -967,8 +1214,8 @@ def build_prompt_projection(record: dict[str, Any], analysis: dict[str, Any] | N
         "published_at": record.get("published_at") or iso_now(),
         "published_ts": float(record.get("published_ts") or now_utc().timestamp()),
         "updated_at": iso_now(),
+        "schema_version": 2,
     }
-
 
 def heuristic_analysis(raw_text: str, path: str = "") -> dict[str, Any]:
     category, score = classify_artifact(path, raw_text)
@@ -1458,8 +1705,9 @@ def provider_messages(action: str, text: str, records: list[dict[str, Any]] | No
     elif action == "analysis":
         system = (
             "Ты проводишь экспресс-анализ артефакта. Верни только JSON: "
-            '{"summary":"...","killer_feature":"...","should_disappear":"...","tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."],"is_prompt":true,"prompt_title":"...","prompt_body":"...","description":"Как работает: ... Почему работает: ... На выходе: ...","literacy_score":0,"special_marks":["..."],"remarks":["..."]}'
-            " Поле description не пересказывает назначение промпта: объясни его механику, почему конструкция направляет модель и какой конкретный формат или тип результата получится."
+            '{"summary":"...","killer_feature":"...","should_disappear":"...","tags":["english-tag"],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."],"is_prompt":true,"prompt_title":"...","prompt_body":"...","how_it_works":"...","why_it_works":"...","structure":["..."],"coverage":["..."],"expected_output":"...","learning_complexity":{"level":"низкая|средняя|высокая","score":0,"reason":"..."},"literacy_score":0,"special_marks":["..."],"remarks":["..."]}'
+            " Поле how_it_works человеческим языком описывает выполняемую операцию и логику. Укажи структуру, полноту покрытия, сложность освоения и конкретный результат."
+            " Верни 3-5 английских тегов в lowercase-kebab-case, включая 1-2 узких предметных тега. Не добавляй ссылки или references."
             " Если вход не содержит самостоятельного применимого промпта, поставь is_prompt=false и prompt_body пустым."
         )
         user = text
@@ -1473,6 +1721,13 @@ def provider_messages(action: str, text: str, records: list[dict[str, Any]] | No
         system = (
             "Ты определяешь, что должно исчезнуть или быть удалено. Верни только JSON: "
             '{"summary":"...","killer_feature":"...","should_disappear":"...","anti_patterns":["..."],"tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."]}'
+        )
+        user = text
+    elif action == "prompt_register_analysis":
+        system = (
+            "Ты сравниваешь выбранный набор промптов как prompt engineer. Верни только JSON: "
+            '{"summary":"...","patterns":["..."],"strengths":["..."],"weaknesses":["..."],"differences":["..."],"use_cases":["..."],"merge_recommendation":"..."}'
+            " Анализируй конструкцию, ограничения, ожидаемый выход и пригодность к объединению. Не перепечатывай промпты целиком."
         )
         user = text
     else:
@@ -1608,13 +1863,19 @@ async def store_prompt_projection(record: dict[str, Any], analysis: dict[str, An
     else:
         prompt["serial"] = f"P-{await redis_client.incr(PROMPTS_SERIAL_KEY):06d}"
     await redis_client.hset(PROMPTS_HASH_KEY, str(prompt["id"]), json.dumps(prompt, ensure_ascii=False))
+    await redis_client.hset(PROMPTS_SERIAL_INDEX_KEY, str(prompt["serial"]), str(prompt["id"]))
     await redis_client.zadd(PROMPTS_ORDER_KEY, {str(prompt["id"]): prompt["published_ts"]})
     overflow = await redis_client.zcard(PROMPTS_ORDER_KEY) - MAX_PROMPT_CATALOG
     if overflow > 0:
         stale_ids = await redis_client.zrange(PROMPTS_ORDER_KEY, 0, overflow - 1)
         if stale_ids:
+            stale_raw = await redis_client.hmget(PROMPTS_HASH_KEY, stale_ids)
+            stale_prompts = [json.loads(raw) for raw in stale_raw if raw]
+            stale_serials = [prompt.get("serial") for prompt in stale_prompts if prompt.get("serial")]
             await redis_client.zrem(PROMPTS_ORDER_KEY, *stale_ids)
             await redis_client.hdel(PROMPTS_HASH_KEY, *stale_ids)
+            if stale_serials:
+                await redis_client.hdel(PROMPTS_SERIAL_INDEX_KEY, *stale_serials)
     return prompt
 
 
@@ -1637,10 +1898,29 @@ async def backfill_prompt_catalog() -> None:
     prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
     description_updates = {}
     for prompt in prompts:
-        prompt["description"] = prompt_mechanics_description(prompt.get("title", "Untitled prompt"), prompt.get("prompt_body", ""))
+        title = prompt.get("title", "Untitled prompt")
+        body = prompt.get("prompt_body", "")
+        category = prompt.get("prompt_type", "Prompt")
+        complexity = int(prompt.get("complexity", derive_complexity(category, body)))
+        mechanics = prompt_mechanics(title, body, complexity)
+        tags, tag_origin = prompt_tags(title, body, category, prompt.get("tags", []))
+        prompt.update(mechanics)
+        prompt["description"] = (
+            f"Как работает: {mechanics['how_it_works']} "
+            f"Почему работает: {mechanics['why_it_works']} "
+            f"На выходе: {mechanics['expected_output']}."
+        )[:1500]
+        prompt["description_origin"] = prompt.get("description_origin", "reconstructed")
+        prompt["tags"] = tags
+        prompt["tag_origin"] = tag_origin
+        prompt["token_estimate"] = prompt_token_estimate(body, mechanics["expected_output"])
+        prompt["schema_version"] = 2
         description_updates[str(prompt["id"])] = json.dumps(prompt, ensure_ascii=False)
     if description_updates:
         await app.state.redis.hset(PROMPTS_HASH_KEY, mapping=description_updates)
+        serial_index = {str(prompt["serial"]): str(prompt["id"]) for prompt in prompts if prompt.get("serial") and prompt.get("id")}
+        if serial_index:
+            await app.state.redis.hset(PROMPTS_SERIAL_INDEX_KEY, mapping=serial_index)
     if stored or description_updates:
         logging.info("Backfilled %s prompts and refreshed %s descriptions", stored, len(description_updates))
 
@@ -2794,11 +3074,26 @@ async def api_canvas_archive(payload: dict[str, Any] = Body(...), username: str 
 
 
 def public_prompt_item(prompt: dict[str, Any]) -> dict[str, Any]:
+    learning = prompt_learning_complexity(prompt.get("learning_complexity"), {"level": "средняя", "score": 50, "reason": ""})
+    token_estimate = prompt.get("token_estimate") if isinstance(prompt.get("token_estimate"), dict) else {}
     return {
         "serial": prompt.get("serial", "P-000000"),
         "title": prompt.get("title", "Untitled prompt"),
         "prompt_body": prompt.get("prompt_body", ""),
         "description": prompt.get("description", ""),
+        "how_it_works": prompt.get("how_it_works", ""),
+        "why_it_works": prompt.get("why_it_works", ""),
+        "structure": prompt_text_list(prompt.get("structure"), []),
+        "coverage": prompt_text_list(prompt.get("coverage"), []),
+        "expected_output": str(prompt.get("expected_output", ""))[:500],
+        "learning_complexity": learning,
+        "token_estimate": {
+            key: {
+                "min": nonnegative_int((token_estimate.get(key) or {}).get("min", 0)),
+                "max": nonnegative_int((token_estimate.get(key) or {}).get("max", 0)),
+            }
+            for key in ["input", "output", "total"]
+        } | {"method": str(token_estimate.get("method", "heuristic-v1"))[:32]},
         "tags": prompt.get("tags", []),
         "complexity": int(prompt.get("complexity", 0)),
         "literacy_score": int(prompt.get("literacy_score", 0)),
@@ -2808,23 +3103,267 @@ def public_prompt_item(prompt: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@app.get("/api/prompts")
-async def api_prompts(q: str = "", tag: str = "", min_complexity: int = 0, min_literacy: int = 0, limit: int = 200) -> JSONResponse:
-    prompts = await load_prompt_catalog(limit=max(1, min(limit, 500)))
-    query = normalize_ws(q).lower()
-    tag_query = tag.strip().lower()
+def compact_prompt_item(prompt: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "serial": prompt.get("serial", "P-000000"),
+        "title": prompt.get("title", "Untitled prompt"),
+        "tags": prompt.get("tags", []),
+        "complexity": int(prompt.get("complexity", 0)),
+        "literacy_score": int(prompt.get("literacy_score", 0)),
+        "prompt_type": prompt.get("prompt_type", "Prompt"),
+        "token_estimate": prompt.get("token_estimate", {}),
+    }
+
+def split_filter_values(raw: str) -> set[str]:
+    return {value.strip().lower() for value in raw.split(",") if value.strip()}
+
+
+def filter_prompt_items(
+    prompts: list[dict[str, Any]],
+    query: str = "",
+    tags: set[str] | None = None,
+    prompt_types: set[str] | None = None,
+    min_complexity: int = 0,
+    max_complexity: int = 100,
+    min_literacy: int = 0,
+    max_literacy: int = 100,
+    complexity_buckets: set[str] | None = None,
+    literacy_buckets: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    normalized_query = normalize_ws(query).lower()
+    wanted_tags = tags or set()
+    wanted_types = prompt_types or set()
+    wanted_complexity = complexity_buckets or set()
+    wanted_literacy = literacy_buckets or set()
     filtered = []
     for prompt in prompts:
-        if int(prompt.get("complexity", 0)) < min_complexity or int(prompt.get("literacy_score", 0)) < min_literacy:
+        complexity = int(prompt.get("complexity", 0))
+        literacy = int(prompt.get("literacy_score", 0))
+        if not min_complexity <= complexity <= max_complexity or not min_literacy <= literacy <= max_literacy:
             continue
-        tags = [str(value).lower() for value in prompt.get("tags", [])]
-        if tag_query and tag_query not in tags:
+        complexity_bucket = "0-39" if complexity < 40 else "40-59" if complexity < 60 else "60-79" if complexity < 80 else "80-100"
+        literacy_bucket = "0-49" if literacy < 50 else "50-69" if literacy < 70 else "70-84" if literacy < 85 else "85-100"
+        if wanted_complexity and complexity_bucket not in wanted_complexity:
             continue
-        blob = normalize_ws(" ".join([prompt.get("title", ""), prompt.get("prompt_body", ""), prompt.get("description", ""), " ".join(tags)])).lower()
-        if query and query not in blob:
+        if wanted_literacy and literacy_bucket not in wanted_literacy:
             continue
-        filtered.append(public_prompt_item(prompt))
-    return JSONResponse({"items": filtered, "count": len(filtered)})
+        item_tags = {str(value).lower() for value in prompt.get("tags", [])}
+        if wanted_tags and not item_tags.intersection(wanted_tags):
+            continue
+        if wanted_types and str(prompt.get("prompt_type", "Prompt")).lower() not in wanted_types:
+            continue
+        blob = normalize_ws(" ".join([
+            str(prompt.get("title", "")), str(prompt.get("prompt_body", "")),
+            str(prompt.get("description", "")), " ".join(item_tags),
+        ])).lower()
+        if normalized_query and normalized_query not in blob:
+            continue
+        filtered.append(prompt)
+    return filtered
+
+
+def sort_prompt_items(prompts: list[dict[str, Any]], sort: str) -> list[dict[str, Any]]:
+    sorters = {
+        "oldest": (lambda item: float(item.get("published_ts", 0)), False),
+        "serial": (lambda item: str(item.get("serial", "")), False),
+        "title": (lambda item: str(item.get("title", "")).lower(), False),
+        "complexity": (lambda item: int(item.get("complexity", 0)), True),
+        "literacy": (lambda item: int(item.get("literacy_score", 0)), True),
+        "newest": (lambda item: float(item.get("published_ts", 0)), True),
+    }
+    key, reverse = sorters.get(sort, sorters["newest"])
+    return sorted(prompts, key=key, reverse=reverse)
+
+
+def prompt_facets(prompts: list[dict[str, Any]]) -> dict[str, Any]:
+    type_counts: dict[str, int] = defaultdict(int)
+    tag_counts: dict[str, int] = defaultdict(int)
+    complexity = {"0-39": 0, "40-59": 0, "60-79": 0, "80-100": 0}
+    literacy = {"0-49": 0, "50-69": 0, "70-84": 0, "85-100": 0}
+    for prompt in prompts:
+        type_counts[str(prompt.get("prompt_type", "Prompt"))] += 1
+        for tag in prompt.get("tags", []):
+            tag_counts[str(tag)] += 1
+        cmp_score = int(prompt.get("complexity", 0))
+        lit_score = int(prompt.get("literacy_score", 0))
+        complexity["0-39" if cmp_score < 40 else "40-59" if cmp_score < 60 else "60-79" if cmp_score < 80 else "80-100"] += 1
+        literacy["0-49" if lit_score < 50 else "50-69" if lit_score < 70 else "70-84" if lit_score < 85 else "85-100"] += 1
+    return {
+        "types": dict(sorted(type_counts.items())),
+        "tags": dict(sorted(tag_counts.items(), key=lambda item: (-item[1], item[0]))[:60]),
+        "complexity": complexity,
+        "literacy": literacy,
+    }
+
+
+async def load_prompt_by_serial(serial: str) -> dict[str, Any] | None:
+    if not re.fullmatch(r"P-\d{6}", serial):
+        return None
+    redis_client: aioredis.Redis = app.state.redis
+    prompt_id = await redis_client.hget(PROMPTS_SERIAL_INDEX_KEY, serial)
+    if prompt_id:
+        raw = await redis_client.hget(PROMPTS_HASH_KEY, prompt_id)
+        if raw:
+            return json.loads(raw)
+        await redis_client.hdel(PROMPTS_SERIAL_INDEX_KEY, serial)
+    for prompt in await load_prompt_catalog(MAX_PROMPT_CATALOG):
+        if prompt.get("serial") == serial:
+            await redis_client.hset(PROMPTS_SERIAL_INDEX_KEY, serial, str(prompt["id"]))
+            return prompt
+    return None
+
+
+async def resolve_prompt_serials(serials: list[str], limit: int) -> list[dict[str, Any]]:
+    clean = list(dict.fromkeys(str(serial).strip() for serial in serials if str(serial).strip()))
+    if len(clean) > limit:
+        raise HTTPException(status_code=400, detail=f"Maximum {limit} prompts per request")
+    prompts = []
+    for serial in clean:
+        prompt = await load_prompt_by_serial(serial)
+        if prompt:
+            prompts.append(prompt)
+    return prompts
+
+
+def markdown_fence(body: str) -> str:
+    longest = max((len(match) for match in re.findall(r"`+", body)), default=2)
+    return "`" * max(3, longest + 1)
+
+
+def build_prompt_register_export(registers: list[dict[str, Any]], format_name: str) -> tuple[str, str]:
+    exported_at = iso_now()
+    safe_registers = []
+    for register in registers:
+        safe_registers.append({
+            "id": str(register.get("id", "register"))[:32],
+            "name": str(register.get("name", "REGISTER"))[:80],
+            "color": str(register.get("color", "#57ff8f"))[:16],
+            "prompts": [public_prompt_item(prompt) for prompt in register.get("prompts", [])],
+        })
+    if format_name == "json":
+        return json.dumps({"version": 1, "exported_at": exported_at, "registers": safe_registers}, ensure_ascii=False, indent=2), "application/json"
+    sections = [f"# Prompt Register Export\n\nExported: {exported_at}"]
+    for register in safe_registers:
+        sections.append(f"## {register['name']} [{register['color']}]")
+        for prompt in register["prompts"]:
+            fence = markdown_fence(prompt["prompt_body"])
+            tags = " ".join(f"#{tag}" for tag in prompt["tags"])
+            sections.append(
+                f"### {prompt['serial']} — {prompt['title']}\n\n"
+                f"{prompt['description']}\n\n"
+                f"CMP {prompt['complexity']} | LIT {prompt['literacy_score']} | {prompt['prompt_type']}\n\n"
+                f"Structure: {' → '.join(prompt['structure']) or '-'}\n\n"
+                f"Coverage: {', '.join(prompt['coverage']) or '-'}\n\n"
+                f"Learning: {prompt['learning_complexity'].get('level', '-')} — {prompt['learning_complexity'].get('reason', '-')}\n\n"
+                f"Tokens: IN ~{prompt['token_estimate'].get('input', {}).get('min', 0)}-{prompt['token_estimate'].get('input', {}).get('max', 0)} | OUT ~{prompt['token_estimate'].get('output', {}).get('min', 0)}-{prompt['token_estimate'].get('output', {}).get('max', 0)}\n\n"
+                f"{tags}\n\n{fence}text\n{prompt['prompt_body']}\n{fence}\n\n"
+                f"Marks: {', '.join(prompt['special_marks']) or '-'}\n\n"
+                f"Remarks: {'; '.join(prompt['remarks']) or '-'}"
+            )
+    return "\n\n".join(sections) + "\n", "text/markdown"
+
+
+@app.get("/api/prompts")
+async def api_prompts(
+    q: str = "", tag: str = "", tags: str = "", types: str = "",
+    min_complexity: int = 0, max_complexity: int = 100,
+    min_literacy: int = 0, max_literacy: int = 100,
+    complexity_buckets: str = "", literacy_buckets: str = "",
+    sort: str = "newest", offset: int = 0, limit: int = 200, view: str = "full",
+) -> JSONResponse:
+    prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
+    wanted_tags = split_filter_values(tags)
+    wanted_tags.update(split_filter_values(tag))
+    filtered = filter_prompt_items(
+        prompts, q, wanted_tags, split_filter_values(types),
+        int(clamp(min_complexity, 0, 100)), int(clamp(max_complexity, 0, 100)),
+        int(clamp(min_literacy, 0, 100)), int(clamp(max_literacy, 0, 100)),
+        split_filter_values(complexity_buckets), split_filter_values(literacy_buckets),
+    )
+    ordered = sort_prompt_items(filtered, sort)
+    facet_base = filter_prompt_items(
+        prompts, q, set(), set(),
+        int(clamp(min_complexity, 0, 100)), int(clamp(max_complexity, 0, 100)),
+        int(clamp(min_literacy, 0, 100)), int(clamp(max_literacy, 0, 100)),
+        split_filter_values(complexity_buckets), split_filter_values(literacy_buckets),
+    )
+    safe_offset = max(0, offset)
+    safe_limit = max(1, min(limit, 500 if view != "compact" else 200))
+    page = ordered[safe_offset:safe_offset + safe_limit]
+    if view == "compact":
+        return JSONResponse({
+            "items": [compact_prompt_item(prompt) for prompt in page],
+            "count": len(page), "total": len(ordered), "offset": safe_offset,
+            "limit": safe_limit, "facets": prompt_facets(facet_base),
+        })
+    return JSONResponse({"items": [public_prompt_item(prompt) for prompt in page], "count": len(page)})
+
+
+@app.get("/api/prompts/{serial}")
+async def api_prompt_detail(serial: str) -> JSONResponse:
+    prompt = await load_prompt_by_serial(serial)
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    return JSONResponse(public_prompt_item(prompt))
+
+
+@app.post("/api/prompts/export")
+async def api_prompt_export(payload: dict[str, Any] = Body(...)) -> Response:
+    format_name = str(payload.get("format", "md")).lower()
+    if format_name not in {"md", "json"}:
+        raise HTTPException(status_code=400, detail="Format must be md or json")
+    raw_registers = payload.get("registers", [])
+    if not isinstance(raw_registers, list) or not raw_registers:
+        raise HTTPException(status_code=400, detail="At least one register is required")
+    unique_serials = list(dict.fromkeys(
+        str(serial) for register in raw_registers for serial in register.get("serials", [])
+    ))
+    if len(unique_serials) > 200:
+        raise HTTPException(status_code=400, detail="Maximum 200 prompts per export")
+    resolved = {prompt["serial"]: prompt for prompt in await resolve_prompt_serials(unique_serials, 200)}
+    registers = []
+    for register in raw_registers[:10]:
+        registers.append({
+            "id": register.get("id"), "name": register.get("name"), "color": register.get("color"),
+            "prompts": [resolved[str(serial)] for serial in register.get("serials", []) if str(serial) in resolved],
+        })
+    content, media_type = build_prompt_register_export(registers, format_name)
+    extension = "json" if format_name == "json" else "md"
+    return Response(content=content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="prompt-register.{extension}"'})
+
+
+@app.post("/api/prompts/analyze")
+async def api_prompt_analyze(payload: dict[str, Any] = Body(...), username: str = Depends(authenticate)) -> JSONResponse:
+    serials = [str(value) for value in payload.get("serials", [])]
+    prompts = await resolve_prompt_serials(serials, 20)
+    if not prompts:
+        raise HTTPException(status_code=400, detail="Select at least one existing prompt")
+    if not provider_is_configured():
+        raise HTTPException(status_code=503, detail="AI provider is not configured")
+    register_name = str(payload.get("register_name", "REGISTER"))[:80]
+    chunks = []
+    for prompt in prompts:
+        chunks.append(
+            f"[{prompt['serial']}] {prompt['title']}\n"
+            f"Description: {prompt['description']}\n"
+            f"Tags: {', '.join(prompt.get('tags', []))}\n"
+            f"Prompt: {prompt.get('prompt_body', '')[:3000]}"
+        )
+    analysis_input = f"Register: {register_name}\n\n" + "\n\n---\n\n".join(chunks)
+    try:
+        result, usage, _ = await call_provider("prompt_register_analysis", analysis_input)
+    except Exception as exc:
+        logging.error("Prompt register analysis failed: %s", exc)
+        raise HTTPException(status_code=502, detail="AI analysis failed") from exc
+    normalized = normalize_usage(usage, analysis_input, json.dumps(result, ensure_ascii=False))
+    cost = estimated_cost(normalized)
+    provider = app.state.provider_state
+    await record_usage(provider.get("name", "OpenAI-compatible"), provider.get("model", "unknown"), "prompt_register_analysis", normalized, cost)
+    return JSONResponse({
+        "ok": True, "result": result, "usage": normalized, "estimated_cost": round(cost, 6),
+        "provider": provider.get("name"), "model": provider.get("model"),
+        "prompt_count": len(prompts), "user": username,
+    })
 
 
 @app.get("/prompts", response_class=HTMLResponse)

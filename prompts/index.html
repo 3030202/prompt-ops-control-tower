@@ -3,356 +3,135 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Prompt Register // 8</title>
+  <title>Prompt Register // Dense TUI</title>
+  <link rel="icon" href="data:,">
   <style>
-    :root {
-      --bg: #050706;
-      --panel: #0a0e0c;
-      --line: #26322b;
-      --line-hot: #47705a;
-      --text: #d7e0da;
-      --muted: #718078;
-      --acid: #57ff8f;
-      --amber: #ffc857;
-      --red: #ff5b5b;
-      --blue: #79b8ff;
-      --code: #080b09;
-    }
-    * { box-sizing: border-box; }
-    html { background: var(--bg); }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      color: var(--text);
-      background:
-        linear-gradient(rgba(87,255,143,.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(87,255,143,.018) 1px, transparent 1px),
-        radial-gradient(circle at 80% -10%, rgba(87,255,143,.09), transparent 32%),
-        var(--bg);
-      background-size: 32px 32px, 32px 32px, auto, auto;
-      font: 13px/1.55 "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
-    }
-    button, input, select { font: inherit; }
-    button { color: inherit; }
-    .shell { width: min(1500px, 100%); margin: 0 auto; padding: 0 18px 70px; }
-    .topbar {
-      position: sticky;
-      z-index: 20;
-      top: 0;
-      display: grid;
-      grid-template-columns: auto minmax(260px, 1fr) auto;
-      align-items: center;
-      gap: 18px;
-      min-height: 52px;
-      margin: 0 -18px 24px;
-      padding: 8px 18px;
-      border-bottom: 1px solid var(--line);
-      background: rgba(5,7,6,.94);
-      backdrop-filter: blur(18px);
-    }
-    .brand { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
-    .brand strong { color: var(--acid); letter-spacing: .12em; }
-    .brand span, .counter { color: var(--muted); }
-    .filters { display: grid; grid-template-columns: minmax(180px, 1fr) 170px 140px 140px; gap: 7px; }
-    .field {
-      width: 100%;
-      height: 34px;
-      padding: 0 10px;
-      color: var(--text);
-      border: 1px solid var(--line);
-      border-radius: 0;
-      outline: none;
-      background: #090c0a;
-    }
-    .field:focus { border-color: var(--acid); box-shadow: 0 0 0 1px rgba(87,255,143,.2); }
-    .manifesto {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: end;
-      gap: 32px;
-      padding: 16px 0 24px;
-      border-bottom: 1px solid var(--line);
-    }
-    h1 { margin: 0; font-size: clamp(26px, 5vw, 70px); line-height: .94; letter-spacing: -.065em; text-transform: uppercase; }
-    h1 em { color: var(--acid); font-style: normal; }
-    .manifesto p { max-width: 660px; margin: 12px 0 0; color: var(--muted); }
-    .legend { display: grid; gap: 6px; color: var(--muted); text-align: right; white-space: nowrap; }
-    .legend b { color: var(--text); font-weight: 500; }
-    .records { display: grid; gap: 1px; margin-top: 20px; background: var(--line); border: 1px solid var(--line); }
-    .prompt-record { display: grid; grid-template-columns: 118px minmax(0, 1fr); background: var(--panel); }
-    .prompt-record.active { outline: 1px solid var(--acid); outline-offset: -1px; }
-    .serial {
-      padding: 18px 14px;
-      color: var(--acid);
-      border-right: 1px solid var(--line);
-      font-weight: 700;
-      letter-spacing: .06em;
-    }
-    .record-main { min-width: 0; padding: 18px 20px 20px; }
-    .record-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start; }
-    .prompt-title { margin: 0; color: #f1f7f3; font-size: 18px; line-height: 1.3; }
-    .description { margin: 7px 0 14px; color: #9dac9f; }
-    .scores { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-    .score, .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      min-height: 24px;
-      padding: 2px 7px;
-      border: 1px solid var(--line);
-      color: var(--muted);
-      background: #080b09;
-      white-space: nowrap;
-    }
-    .score b { color: var(--text); }
-    .score.high b { color: var(--acid); }
-    .score.mid b { color: var(--amber); }
-    .prompt-code {
-      position: relative;
-      max-height: 430px;
-      margin: 0;
-      padding: 18px 52px 18px 18px;
-      overflow: auto;
-      border: 1px solid var(--line);
-      background: var(--code);
-      color: #d6ded8;
-      tab-size: 2;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-    }
-    .prompt-code::before {
-      content: "PROMPT";
-      position: absolute;
-      top: 0;
-      right: 0;
-      padding: 2px 7px;
-      color: var(--muted);
-      border-left: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      font-size: 10px;
-    }
-    .token-var { color: var(--amber); }
-    .token-role { color: var(--acid); font-weight: 600; }
-    .token-key { color: var(--blue); }
-    .token-quote { color: #d2a8ff; }
-    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; margin-top: 12px; }
-    .meta-block { min-width: 0; }
-    .meta-label { margin-right: 8px; color: var(--muted); font-size: 11px; letter-spacing: .1em; }
-    .pill { margin: 3px 4px 0 0; min-height: 21px; padding: 1px 6px; }
-    .tag { color: var(--blue); }
-    .mark { color: var(--acid); border-color: #244b32; }
-    .remark-list { margin: 4px 0 0; padding: 0; list-style: none; color: var(--amber); }
-    .remark-list li::before { content: "! "; color: var(--red); }
-    .copy {
-      float: right;
-      margin-top: 10px;
-      padding: 5px 9px;
-      border: 1px solid var(--line);
-      background: transparent;
-      cursor: pointer;
-    }
-    .copy:hover, .copy:focus { color: var(--acid); border-color: var(--acid); outline: none; }
-    .empty { padding: 70px 20px; text-align: center; color: var(--muted); background: var(--panel); }
-    .empty strong { display: block; margin-bottom: 8px; color: var(--amber); }
-    .statusbar {
-      position: fixed;
-      z-index: 30;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      display: flex;
-      justify-content: center;
-      gap: 24px;
-      padding: 8px 14px;
-      color: var(--muted);
-      border-top: 1px solid var(--line);
-      background: rgba(5,7,6,.97);
-    }
-    .statusbar kbd { color: var(--acid); border: 0; background: none; font: inherit; }
-    @media (max-width: 980px) {
-      .topbar { grid-template-columns: 1fr auto; }
-      .filters { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; }
-      .manifesto { grid-template-columns: 1fr; }
-      .legend { display: none; }
-    }
-    @media (max-width: 680px) {
-      .shell { padding-inline: 10px; }
-      .topbar { margin-inline: -10px; padding-inline: 10px; }
-      .brand span { display: none; }
-      .filters { grid-template-columns: 1fr; }
-      .prompt-record { grid-template-columns: 1fr; }
-      .serial { padding: 10px 14px; border-right: 0; border-bottom: 1px solid var(--line); }
-      .record-head, .meta { grid-template-columns: 1fr; }
-      .scores { justify-content: flex-start; }
-      .record-main { padding: 15px 12px 18px; }
-      .statusbar { gap: 10px; font-size: 11px; }
-      .statusbar span:nth-child(4) { display: none; }
-    }
+    :root{--bg:#050706;--panel:#080b09;--panel2:#0c110e;--line:#26322b;--line2:#38463d;--text:#d8e2db;--muted:#75847b;--acid:#57ff8f;--amber:#ffc857;--red:#ff5b5b;--cyan:#58d6ff;--magenta:#ff68d4;--row:24px;--top:34px;--foot:32px;--tree:224px;--table:44%}
+    *{box-sizing:border-box}html,body{height:100%;overflow:hidden}body{margin:0;background:var(--bg);color:var(--text);font:12px/1.35 "JetBrains Mono","Fira Code","Cascadia Code",monospace}button,input,select{font:inherit}button{color:inherit}.app{height:100%;display:grid;grid-template-rows:var(--top) 1fr var(--foot)}
+    .topbar{display:flex;align-items:center;gap:10px;padding:0 8px;border-bottom:1px solid var(--line2);background:#020403;min-width:0}.brand{color:var(--acid);font-weight:900;letter-spacing:.09em;white-space:nowrap}.searchbox{display:flex;align-items:center;min-width:180px;max-width:540px;flex:1;border-left:1px solid var(--line);border-right:1px solid var(--line);padding:0 8px}.searchbox b{color:var(--acid)}.searchbox input{width:100%;height:27px;border:0;outline:0;background:transparent;color:var(--text);padding:0 7px}.filter-chips{display:flex;gap:4px;min-width:0;overflow:auto}.chip{height:21px;border:1px solid var(--line);background:var(--panel);color:var(--cyan);padding:1px 6px;white-space:nowrap;cursor:pointer}.chip:hover{border-color:var(--red);color:var(--red)}.sort{height:25px;border:1px solid var(--line);border-radius:0;background:var(--panel);color:var(--text)}.total{color:var(--muted);white-space:nowrap}.total b{color:var(--acid)}
+    .workspace{min-height:0;display:grid;grid-template-columns:var(--tree) minmax(380px,var(--table)) minmax(320px,1fr)}.workspace.tree-hidden{grid-template-columns:0 minmax(380px,var(--table)) minmax(320px,1fr)}.workspace.preview-hidden{grid-template-columns:var(--tree) minmax(480px,1fr) 0}.workspace.tree-hidden.preview-hidden{grid-template-columns:0 1fr 0}.workspace.tree-hidden .tree-pane,.workspace.preview-hidden .preview-pane{display:none}.pane{min-width:0;min-height:0;border-right:1px solid var(--line2);background:var(--panel)}.pane:last-child{border-right:0}.pane.focused{box-shadow:inset 0 0 0 1px var(--acid)}.pane-title{height:27px;display:flex;align-items:center;gap:7px;padding:0 7px;border-bottom:1px solid var(--line2);background:#090e0b;color:var(--acid);font-weight:800}.pane-title small{color:var(--muted);font-weight:400}.pane-title .actions{margin-left:auto;display:flex;gap:7px}.link{border:0;background:none;color:var(--cyan);padding:0;cursor:pointer}.link:hover{color:var(--acid)}
+    .tree-pane{display:grid;grid-template-rows:27px 1fr}.tree-scroll{overflow:auto;scrollbar-color:var(--line2) var(--bg)}.tree-group{border-bottom:1px solid var(--line)}.tree-group>summary{height:25px;display:flex;align-items:center;gap:6px;padding:0 7px;color:#aab7af;background:#070a08;cursor:pointer;list-style:none}.tree-group>summary::before{content:"[-]";color:var(--amber)}.tree-group:not([open])>summary::before{content:"[+]"}.tree-group>summary b{margin-left:auto;color:var(--muted);font-weight:400}.tree-items{padding:2px 0}.tree-item{width:100%;min-height:23px;display:grid;grid-template-columns:13px 1fr auto;align-items:center;gap:5px;border:0;background:none;color:var(--muted);padding:1px 8px;text-align:left;cursor:pointer}.tree-item:hover,.tree-item.selected{background:#111a14;color:var(--text)}.tree-item.selected::before{content:">";color:var(--acid)}.tree-item:not(.selected)::before{content:"·"}.tree-item.active-register{box-shadow:inset 3px 0 var(--acid);color:var(--text)}.tree-item .count{color:#657269}.swatch{width:9px;height:9px;display:inline-block;background:var(--register-color);margin-right:5px}.tree-empty{padding:5px 8px;color:var(--muted)}
+    .table-pane{display:grid;grid-template-rows:27px 24px 1fr}.table-head,.prompt-row{display:grid;grid-template-columns:68px 72px 30px 30px 62px 68px 76px minmax(130px,1fr) minmax(90px,18%);align-items:center;gap:5px;padding:0 6px}.table-head{color:var(--muted);background:#111713;border-bottom:1px solid var(--line2);font-size:10px;text-transform:uppercase}.viewport{min-height:0;overflow:auto;scrollbar-color:var(--line2) var(--bg);position:relative}.prompt-row{height:var(--row);border-bottom:1px solid #18211b;cursor:default;background:var(--panel)}.prompt-row:nth-child(even){background:#0a0e0c}.prompt-row:hover{background:#121a15}.prompt-row.active{background:#17251c;box-shadow:inset 3px 0 var(--acid);color:#fff}.prompt-row.in-range{background:#1d2417}.cell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.serial{color:var(--cyan)}.score.high{color:var(--acid)}.score.mid{color:var(--amber)}.score.low{color:var(--red)}.ptype{color:#b0c5b7}.row-tags{color:#7f9185}.row-marks{display:flex;gap:2px}.reg-token{min-width:12px;height:15px;display:grid;place-items:center;border:1px solid #29332c;color:#435047;font-size:9px}.reg-token.on{color:#061008;background:var(--register-color);border-color:var(--register-color);font-weight:900}.spacer{height:0}.no-results{padding:18px;color:var(--muted)}
+    .preview-pane{display:grid;grid-template-rows:27px auto minmax(160px,1fr) auto}.preview-meta{display:grid;grid-template-columns:repeat(3,minmax(72px,1fr));gap:1px;border-bottom:1px solid var(--line);background:var(--line)}.meta-cell{padding:4px 7px;background:#080c09;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}.meta-cell b{color:var(--text)}.preview-code{margin:0;min-height:0;overflow:auto;padding:10px 12px;background:#020403;color:#d6ded8;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2;border-bottom:1px solid var(--line2)}.syn-var{color:var(--amber)}.syn-role{color:var(--acid);font-weight:700}.syn-key{color:var(--cyan)}.syn-quote{color:#d8a6ff}.preview-info{max-height:43vh;overflow:auto;padding:7px 10px;background:#080c09}.preview-title{margin:0 0 5px;color:#f2f7f4;font-size:14px}.mechanics{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);margin:6px 0}.mechanic{background:#090e0b;padding:6px 7px;color:#abb8b0}.mechanic b{display:block;margin-bottom:3px;color:var(--acid);font-size:10px}.metadata-line{margin-top:5px;color:var(--muted)}.pill{display:inline-block;border:1px solid var(--line);padding:1px 5px;margin:2px 3px 0 0;color:var(--cyan)}.pill.mark{color:var(--acid)}.remarks{margin:4px 0 0;padding:0;list-style:none;color:var(--amber)}.remarks li::before{content:"! ";color:var(--red)}
+    .footer{display:flex;align-items:center;gap:13px;padding:0 8px;border-top:1px solid var(--line2);background:#020403;color:var(--muted);white-space:nowrap;overflow:auto}.hotkey b{color:#041008;background:var(--acid);padding:1px 4px}.footer-spacer{flex:1}.active-reg{color:var(--register-color)}.status{color:var(--amber)}
+    dialog{width:min(700px,calc(100vw - 24px));max-height:84vh;padding:0;border:1px solid var(--line2);border-radius:0;background:#070a08;color:var(--text);box-shadow:0 22px 90px #000}dialog::backdrop{background:#000c}.dialog-head{height:30px;display:flex;align-items:center;padding:0 8px;border-bottom:1px solid var(--line2);color:var(--acid)}.dialog-head button{margin-left:auto;border:0;background:none;color:var(--red);cursor:pointer}.dialog-body{padding:9px;overflow:auto;max-height:72vh}.register-list{display:grid;gap:4px}.register-option{display:grid;grid-template-columns:24px 1fr 70px;align-items:center;gap:7px;padding:5px;border:1px solid var(--line);background:#090e0b;cursor:pointer}.register-option.active{border-color:var(--register-color)}.register-option input{height:25px;border:0;border-bottom:1px solid var(--line2);background:transparent;color:var(--text)}.register-option code{color:var(--register-color)}.command-search{width:100%;height:34px;border:0;border-bottom:1px solid var(--line2);outline:0;background:#020403;color:var(--acid);padding:0 8px}.command-list{max-height:55vh;overflow:auto}.command{display:grid;grid-template-columns:82px 1fr;padding:7px 9px;border-bottom:1px solid var(--line);cursor:pointer}.command:hover,.command.active{background:#152019}.command kbd{color:var(--amber)}.help-grid{display:grid;grid-template-columns:90px 1fr;gap:4px 12px}.help-grid kbd{color:var(--amber)}.export-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}.action-btn{height:34px;border:1px solid var(--line2);background:#0c120e;color:var(--text);cursor:pointer}.action-btn:hover{border-color:var(--acid);color:var(--acid)}.analysis-result{white-space:pre-wrap;color:#b9c7be}.analysis-meta{margin-bottom:7px;color:var(--muted)}
+    @media(max-width:900px){.topbar .filter-chips{display:none}.workspace,.workspace.tree-hidden,.workspace.preview-hidden,.workspace.tree-hidden.preview-hidden{grid-template-columns:1fr}.pane{display:none!important}.pane.focused{display:grid!important}.mechanics{grid-template-columns:1fr}.footer{gap:8px}.hotkey.optional{display:none}.table-head,.prompt-row{grid-template-columns:64px 68px 32px 32px 1fr}.table-head>:nth-child(5),.table-head>:nth-child(6),.table-head>:nth-child(7),.table-head>:nth-child(9),.prompt-row>:nth-child(5),.prompt-row>:nth-child(6),.prompt-row>:nth-child(7),.prompt-row>:nth-child(9){display:none}}
   </style>
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
-      <div class="brand"><strong>8 // PROMPTS</strong><span>normalized register</span></div>
-      <form class="filters" id="filters">
-        <input class="field" id="search" type="search" placeholder="/ поиск по телу, названию, описанию" autocomplete="off">
-        <select class="field" id="tag"><option value="">все теги</option></select>
-        <select class="field" id="complexity">
-          <option value="0">любая сложность</option><option value="40">сложность 40+</option><option value="60">сложность 60+</option><option value="80">сложность 80+</option>
-        </select>
-        <select class="field" id="literacy">
-          <option value="0">любая грамотность</option><option value="50">грамотность 50+</option><option value="70">грамотность 70+</option><option value="85">грамотность 85+</option>
-        </select>
-      </form>
-      <div class="counter"><span id="count">000</span> ITEMS</div>
-    </header>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">8::PROMPT_WORKSPACE</div>
+    <label class="searchbox"><b>/</b><input id="search" type="search" autocomplete="off" placeholder="filter title, body, mechanics, tags"></label>
+    <div class="filter-chips" id="filterChips"></div>
+    <select class="sort" id="sort" aria-label="Sort prompts"><option value="newest">newest</option><option value="oldest">oldest</option><option value="serial">serial</option><option value="title">title</option><option value="complexity">complexity ↓</option><option value="literacy">literacy ↓</option></select>
+    <div class="total"><b id="visibleCount">0</b>/<span id="totalCount">0</span></div>
+  </header>
 
-    <section class="manifesto">
-      <div>
-        <h1>Prompt<br><em>Register</em></h1>
-        <p>Только применимые промпты. Каждый источник разобран, очищен и приведён к одной форме, чтобы тело, инженерную грамотность и сложность можно было оценивать без информационного шума.</p>
-      </div>
-      <div class="legend">
-        <span><b>CMP</b> // сложность конструкции</span>
-        <span><b>LIT</b> // инженерная грамотность</span>
-        <span><b>MARK</b> // особые свойства</span>
-      </div>
+  <main class="workspace" id="workspace">
+    <aside class="pane tree-pane focused" id="treePane">
+      <div class="pane-title">[1] GROUPS <small>OR / AND</small><div class="actions"><button class="link" id="clearFilters">[clear]</button></div></div>
+      <div class="tree-scroll" id="tree"></div>
+    </aside>
+
+    <section class="pane table-pane" id="tablePane">
+      <div class="pane-title">[2] PROMPTS <small id="rangeStatus">NORMAL</small><div class="actions"><button class="link" data-command="registers">[r] register</button><button class="link" data-command="export-active">[e] export</button></div></div>
+      <div class="table-head"><span>marks</span><span>serial</span><span>cmp</span><span>lit</span><span>in tok</span><span>out tok</span><span>type</span><span>title</span><span>tags</span></div>
+      <div class="viewport" id="viewport"><div class="spacer" id="topSpacer"></div><div id="virtualRows"></div><div class="spacer" id="bottomSpacer"></div></div>
     </section>
 
-    <section class="records" id="records" aria-live="polite">
-      <div class="empty"><strong>INDEXING_PROMPTS</strong>Каталог заполняется нормализованными промптами.</div>
-    </section>
+    <aside class="pane preview-pane" id="previewPane">
+      <div class="pane-title">[3] INSPECT <small id="previewSerial">-</small><div class="actions"><button class="link" data-command="copy">[c] copy</button><button class="link" data-command="analyze">[a] analyze</button></div></div>
+      <div class="preview-meta"><div class="meta-cell">TYPE <b id="pType">-</b></div><div class="meta-cell">CMP <b id="pCmp">-</b></div><div class="meta-cell">LIT <b id="pLit">-</b></div><div class="meta-cell">IN <b id="pInputTokens">-</b></div><div class="meta-cell">OUT <b id="pOutputTokens">-</b></div><div class="meta-cell">TOTAL <b id="pTotalTokens">-</b></div></div>
+      <pre class="preview-code"><code id="previewCode">Select a prompt with j/k or mouse.</code></pre>
+      <div class="preview-info">
+        <h2 class="preview-title" id="pTitle">NO_PROMPT_SELECTED</h2>
+        <div class="mechanics"><div class="mechanic"><b>HOW IT WORKS</b><span id="pHow">-</span></div><div class="mechanic"><b>WHY IT WORKS</b><span id="pWhy">-</span></div><div class="mechanic"><b>STRUCTURE</b><span id="pStructure">-</span></div><div class="mechanic"><b>COVERAGE</b><span id="pCoverage">-</span></div><div class="mechanic"><b>EXPECTED OUTPUT</b><span id="pOutput">-</span></div><div class="mechanic"><b>LEARNING</b><span id="pLearning">-</span></div></div>
+        <div class="metadata-line"><b>REGISTERS</b> <span id="pRegisters">-</span></div>
+        <div class="metadata-line"><b>TAGS</b> <span id="pTags">-</span></div>
+        <div class="metadata-line"><b>MARKS</b> <span id="pMarks">-</span></div>
+        <ul class="remarks" id="pRemarks"><li>-</li></ul>
+      </div>
+    </aside>
   </main>
 
-  <footer class="statusbar">
-    <span><kbd>j/k</kbd> navigate</span>
-    <span><kbd>/</kbd> search</span>
-    <span><kbd>c</kbd> copy</span>
-    <span><kbd>home/end</kbd> jump</span>
+  <footer class="footer">
+    <span class="hotkey"><b>1/2/3</b> panes</span><span class="hotkey"><b>j/k</b> move</span><span class="hotkey"><b>v</b> range</span><span class="hotkey"><b>Space</b> mark</span><span class="hotkey"><b>r</b> register</span><span class="hotkey optional"><b>/</b> search</span><span class="hotkey optional"><b>:</b> commands</span><span class="hotkey optional"><b>?</b> help</span><span class="footer-spacer"></span><span class="active-reg" id="activeRegister">KEEP [0]</span><span class="status" id="status">READY</span>
   </footer>
+</div>
 
-  <script>
-    const state = { items: [], active: 0 };
-    const $ = (id) => document.getElementById(id);
-    const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
-    const tone = (score) => score >= 75 ? "high" : score >= 50 ? "mid" : "";
+<dialog id="registerDialog"><div class="dialog-head">REGISTER_PICKER // 1-5 select<button data-close>×</button></div><div class="dialog-body"><div class="register-list" id="registerList"></div></div></dialog>
+<dialog id="commandDialog"><div class="dialog-head">COMMAND_PALETTE<button data-close>×</button></div><input class="command-search" id="commandSearch" placeholder=": command"><div class="command-list" id="commandList"></div></dialog>
+<dialog id="helpDialog"><div class="dialog-head">KEYMAP // context aware<button data-close>×</button></div><div class="dialog-body help-grid" id="helpGrid"></div></dialog>
+<dialog id="exportDialog"><div class="dialog-head">EXPORT_REGISTERS<button data-close>×</button></div><div class="dialog-body"><p id="exportSummary"></p><div class="export-actions"><button class="action-btn" data-export="active:md">active.md</button><button class="action-btn" data-export="active:json">active.json</button><button class="action-btn" data-export="all:md">all.md</button><button class="action-btn" data-export="all:json">all.json</button></div></div></dialog>
+<dialog id="analysisDialog"><div class="dialog-head">AI_REGISTER_ANALYSIS<button data-close>×</button></div><div class="dialog-body"><div id="analysisAuth" hidden><p>Basic Auth required for AI usage.</p><input class="command-search" id="analysisUser" autocomplete="username" placeholder="username"><input class="command-search" id="analysisPass" type="password" autocomplete="current-password" placeholder="password"><button class="action-btn" id="analysisLogin">authenticate + analyze</button></div><div class="analysis-meta" id="analysisMeta"></div><pre class="analysis-result" id="analysisResult">Select a non-empty register.</pre></div></dialog>
 
-    function highlight(value) {
-      let safe = escapeHtml(value);
-      safe = safe.replace(/(&quot;[^&\n]{1,160}?&quot;|'[^'\n]{1,160}?')/g, '<span class="token-quote">$1</span>');
-      safe = safe.replace(/(\{\{[^}]+\}\}|\$\{[^}]+\}|&lt;[A-Za-z_][^&\n]*?&gt;|\{[A-Za-z_][^}\n]*\})/g, '<span class="token-var">$1</span>');
-      safe = safe.replace(/^(\s*(?:role|system|user|assistant|context|task|goal|constraints?|input|output|format|example|роль|контекст|задача|цель|ограничения|вход|выход|формат)\s*:)/gim, '<span class="token-key">$1</span>');
-      safe = safe.replace(/\b(you are|act as|your task|return only|must|never|ты —|твоя задача|верни только|обязательно|запрещено)\b/gi, '<span class="token-role">$1</span>');
-      return safe;
-    }
-
-    function pills(values, className) {
-      return (values || []).map(value => `<span class="pill ${className}">${escapeHtml(value)}</span>`).join("");
-    }
-
-    function render() {
-      const root = $("records");
-      $("count").textContent = String(state.items.length).padStart(3, "0");
-      if (!state.items.length) {
-        root.innerHTML = '<div class="empty"><strong>NO_PROMPTS_MATCHED</strong>Измените фильтр или дождитесь следующего прохода индексатора.</div>';
-        return;
-      }
-      state.active = Math.min(state.active, state.items.length - 1);
-      root.innerHTML = state.items.map((item, index) => `
-        <article class="prompt-record ${index === state.active ? "active" : ""}" data-index="${index}" tabindex="-1">
-          <div class="serial">${escapeHtml(item.serial)}</div>
-          <div class="record-main">
-            <header class="record-head">
-              <div>
-                <h2 class="prompt-title">${escapeHtml(item.title)}</h2>
-                <p class="description">${escapeHtml(item.description)}</p>
-              </div>
-              <div class="scores">
-                <span class="score ${tone(item.complexity)}">CMP <b>${item.complexity}</b></span>
-                <span class="score ${tone(item.literacy_score)}">LIT <b>${item.literacy_score}</b></span>
-                <span class="score">${escapeHtml(item.prompt_type)}</span>
-              </div>
-            </header>
-            <pre class="prompt-code"><code>${highlight(item.prompt_body)}</code></pre>
-            <button class="copy" data-copy="${index}" type="button">[c] COPY</button>
-            <div class="meta">
-              <div class="meta-block"><span class="meta-label">TAGS</span>${pills(item.tags, "tag") || '<span class="pill">none</span>'}</div>
-              <div class="meta-block"><span class="meta-label">MARKS</span>${pills(item.special_marks, "mark") || '<span class="pill">none</span>'}</div>
-              <div class="meta-block">
-                <span class="meta-label">REMARKS</span>
-                <ul class="remark-list">${(item.remarks || []).map(value => `<li>${escapeHtml(value)}</li>`).join("") || "<li>Без критических замечаний.</li>"}</ul>
-              </div>
-            </div>
-          </div>
-        </article>
-      `).join("");
-      root.querySelectorAll(".prompt-record").forEach(node => node.addEventListener("click", () => activate(Number(node.dataset.index), false)));
-      root.querySelectorAll("[data-copy]").forEach(button => button.addEventListener("click", event => {
-        event.stopPropagation();
-        copyPrompt(Number(button.dataset.copy), button);
-      }));
-    }
-
-    async function load() {
-      const params = new URLSearchParams({
-        q: $("search").value,
-        tag: $("tag").value,
-        min_complexity: $("complexity").value,
-        min_literacy: $("literacy").value,
-        limit: "300"
-      });
-      try {
-        const response = await fetch(`/api/prompts?${params}`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        state.items = data.items || [];
-        const known = $("tag").value;
-        const tags = [...new Set(state.items.flatMap(item => item.tags || []))].sort();
-        $("tag").innerHTML = '<option value="">все теги</option>' + tags.map(tag => `<option value="${escapeHtml(tag)}">${escapeHtml(tag)}</option>`).join("");
-        if (known && tags.includes(known)) $("tag").value = known;
-        render();
-      } catch (error) {
-        $("records").innerHTML = `<div class="empty"><strong>INDEX_UNAVAILABLE</strong>${escapeHtml(error.message)}</div>`;
-      }
-    }
-
-    function activate(index, scroll = true) {
-      state.active = Math.max(0, Math.min(index, state.items.length - 1));
-      document.querySelectorAll(".prompt-record").forEach((node, i) => node.classList.toggle("active", i === state.active));
-      const node = document.querySelector(`[data-index="${state.active}"]`);
-      if (scroll && node) node.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-
-    async function copyPrompt(index, button) {
-      const item = state.items[index];
-      if (!item) return;
-      await navigator.clipboard.writeText(item.prompt_body);
-      const old = button?.textContent;
-      if (button) button.textContent = "[OK] COPIED";
-      setTimeout(() => { if (button) button.textContent = old; }, 900);
-    }
-
-    let debounce;
-    $("filters").addEventListener("input", () => {
-      clearTimeout(debounce);
-      debounce = setTimeout(load, 180);
-    });
-    $("filters").addEventListener("submit", event => event.preventDefault());
-    document.addEventListener("keydown", event => {
-      if (event.key === "/" && document.activeElement !== $("search")) {
-        event.preventDefault();
-        $("search").focus();
-      } else if (event.key === "Escape") {
-        document.activeElement?.blur();
-      } else if (!["INPUT", "SELECT"].includes(document.activeElement?.tagName)) {
-        if (event.key === "j" || event.key === "ArrowDown") { event.preventDefault(); activate(state.active + 1); }
-        if (event.key === "k" || event.key === "ArrowUp") { event.preventDefault(); activate(state.active - 1); }
-        if (event.key === "Home") { event.preventDefault(); activate(0); }
-        if (event.key === "End") { event.preventDefault(); activate(state.items.length - 1); }
-        if (event.key.toLowerCase() === "c") copyPrompt(state.active, document.querySelector(`[data-copy="${state.active}"]`));
-      }
-    });
-    load();
-  </script>
+<script>
+const STORAGE_KEY="prompt-register-workspace.v1",ROW_HEIGHT=24,PAGE_SIZE=200;
+const DEFAULT_REGISTERS=[
+ {id:"keep",name:"KEEP",color:"#57ff8f",key:"K"},{id:"review",name:"REVIEW",color:"#ffc857",key:"V"},{id:"drop",name:"DROP",color:"#ff5b5b",key:"D"},{id:"research",name:"RESEARCH",color:"#58d6ff",key:"S"},{id:"remix",name:"REMIX",color:"#ff68d4",key:"M"}
+];
+const state={items:[],displayItems:[],total:0,facets:{types:{},tags:{},complexity:{},literacy:{}},cursor:0,pane:1,activeRegister:"keep",registers:{},filters:{registers:new Set(),types:new Set(),tags:new Set(),complexity:new Set(),literacy:new Set()},detailCache:new Map(),visualAnchor:null,treeVisible:true,previewVisible:true,commandCursor:0,requestId:0,authHeader:""};
+const $=id=>document.getElementById(id),esc=(v="")=>String(v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const scoreClass=n=>n>=75?"high":n>=50?"mid":"low";
+function registerTemplate(){return Object.fromEntries(DEFAULT_REGISTERS.map(r=>[r.id,{...r,serials:new Set()}]))}
+function loadLocal(){state.registers=registerTemplate();try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}");if(saved.version===1){state.activeRegister=state.registers[saved.activeRegister]?saved.activeRegister:"keep";for(const base of DEFAULT_REGISTERS){const value=saved.registers?.[base.id];if(value){state.registers[base.id].name=String(value.name||base.name).slice(0,32);state.registers[base.id].serials=new Set((value.serials||[]).map(String))}}state.treeVisible=saved.layout?.treeVisible!==false;state.previewVisible=saved.layout?.previewVisible!==false}}catch{}syncLayout()}
+function saveLocal(){localStorage.setItem(STORAGE_KEY,JSON.stringify({version:1,activeRegister:state.activeRegister,registers:Object.fromEntries(Object.entries(state.registers).map(([id,r])=>[id,{name:r.name,serials:[...r.serials]}])),layout:{treeVisible:state.treeVisible,previewVisible:state.previewVisible}}))}
+function syncLayout(){$("workspace").classList.toggle("tree-hidden",!state.treeVisible);$("workspace").classList.toggle("preview-hidden",!state.previewVisible)}
+function setStatus(text,timeout=1800){$("status").textContent=text;if(timeout)setTimeout(()=>{$("status").textContent="READY"},timeout)}
+function current(){return state.displayItems[state.cursor]||null}
+function selectedRegister(){return state.registers[state.activeRegister]}
+function memberships(serial){return Object.values(state.registers).filter(r=>r.serials.has(serial))}
+function persistAndRender(){saveLocal();renderVirtual();renderTree();renderFooter();renderPreviewRegisters()}
+function toggleMark(remove=false){const targets=rangeItems();if(!targets.length)return;const reg=selectedRegister();const allOn=targets.every(item=>reg.serials.has(item.serial));for(const item of targets){if(remove||allOn)reg.serials.delete(item.serial);else reg.serials.add(item.serial)}state.visualAnchor=null;$("rangeStatus").textContent="NORMAL";applyLocalFilters();persistAndRender();setStatus(`${reg.name} ${remove||allOn?"REMOVED":"MARKED"} ${targets.length}`)}
+function rangeItems(){if(state.visualAnchor===null)return current()?[current()]:[];const a=Math.min(state.visualAnchor,state.cursor),b=Math.max(state.visualAnchor,state.cursor);return state.displayItems.slice(a,b+1)}
+function toggleVisual(){state.visualAnchor=state.visualAnchor===null?state.cursor:null;$("rangeStatus").textContent=state.visualAnchor===null?"NORMAL":`VISUAL @${state.visualAnchor+1}`;renderVirtual()}
+function setPane(n){state.pane=Math.max(1,Math.min(3,n));if(state.pane===1&&!state.treeVisible){state.treeVisible=true;syncLayout();saveLocal()}if(state.pane===3&&!state.previewVisible){state.previewVisible=true;syncLayout();saveLocal()}[$("treePane"),$("tablePane"),$("previewPane")].forEach((node,i)=>node.classList.toggle("focused",i+1===state.pane));if(state.pane===3)loadCurrentDetail()}
+function move(delta){if(!state.displayItems.length)return;state.cursor=Math.max(0,Math.min(state.cursor+delta,state.displayItems.length-1));ensureCursorVisible();renderVirtual();loadCurrentDetail()}
+function jump(index){if(!state.displayItems.length)return;state.cursor=Math.max(0,Math.min(index,state.displayItems.length-1));ensureCursorVisible();renderVirtual();loadCurrentDetail()}
+function ensureCursorVisible(){const v=$("viewport"),top=state.cursor*ROW_HEIGHT,bottom=top+ROW_HEIGHT;if(top<v.scrollTop)v.scrollTop=top;else if(bottom>v.scrollTop+v.clientHeight)v.scrollTop=bottom-v.clientHeight}
+function markerHtml(item){return DEFAULT_REGISTERS.map(base=>{const r=state.registers[base.id],on=r.serials.has(item.serial);return `<span class="reg-token ${on?"on":""}" style="--register-color:${r.color}" title="${esc(r.name)}">${r.key}</span>`}).join("")}
+function compactToken(value){const n=Number(value||0);return n>=1000?`${(n/1000).toFixed(n>=10000?0:1)}k`:String(n)}
+function tokenRange(estimate,key){const range=estimate?.[key]||{};return range.min&&range.max?`${compactToken(range.min)}-${compactToken(range.max)}`:"-"}
+function renderVirtual(){const root=$("virtualRows"),v=$("viewport"),items=state.displayItems;if(!items.length){$("topSpacer").style.height="0";$("bottomSpacer").style.height="0";root.innerHTML='<div class="no-results">NO_PROMPTS_MATCH_FILTERS</div>';return}state.cursor=Math.min(state.cursor,items.length-1);const start=Math.max(0,Math.floor(v.scrollTop/ROW_HEIGHT)-8),visible=Math.ceil((v.clientHeight||500)/ROW_HEIGHT)+16,end=Math.min(items.length,start+visible);$("topSpacer").style.height=`${start*ROW_HEIGHT}px`;$("bottomSpacer").style.height=`${(items.length-end)*ROW_HEIGHT}px`;const range=state.visualAnchor===null?[-1,-1]:[Math.min(state.visualAnchor,state.cursor),Math.max(state.visualAnchor,state.cursor)];root.innerHTML=items.slice(start,end).map((item,offset)=>{const i=start+offset;return `<div class="prompt-row ${i===state.cursor?"active":""} ${i>=range[0]&&i<=range[1]?"in-range":""}" data-index="${i}" data-serial="${esc(item.serial)}"><span class="row-marks cell">${markerHtml(item)}</span><span class="serial cell">${esc(item.serial)}</span><span class="score ${scoreClass(item.complexity)} cell">${item.complexity}</span><span class="score ${scoreClass(item.literacy_score)} cell">${item.literacy_score}</span><span class="cell">${tokenRange(item.token_estimate,"input")}</span><span class="cell">${tokenRange(item.token_estimate,"output")}</span><span class="ptype cell">${esc(item.prompt_type)}</span><span class="cell">${esc(item.title)}</span><span class="row-tags cell">${esc((item.tags||[]).map(t=>"#"+t).join(" "))}</span></div>`}).join("");root.querySelectorAll(".prompt-row").forEach(row=>{row.onclick=event=>{if(event.shiftKey&&state.visualAnchor===null)state.visualAnchor=state.cursor;state.cursor=Number(row.dataset.index);setPane(2);renderVirtual();loadCurrentDetail()};row.ondblclick=()=>{state.cursor=Number(row.dataset.index);toggleMark()}});renderFooter()}
+function applyLocalFilters(){const previous=current()?.serial;state.displayItems=state.items.filter(item=>{if(state.filters.registers.size&&! [...state.filters.registers].some(id=>state.registers[id]?.serials.has(item.serial)))return false;const cmp=bucket(item.complexity,[40,60,80],["0-39","40-59","60-79","80-100"]),lit=bucket(item.literacy_score,[50,70,85],["0-49","50-69","70-84","85-100"]);if(state.filters.complexity.size&&!state.filters.complexity.has(cmp))return false;if(state.filters.literacy.size&&!state.filters.literacy.has(lit))return false;return true});const oldIndex=state.displayItems.findIndex(x=>x.serial===previous);state.cursor=oldIndex>=0?oldIndex:Math.min(state.cursor,Math.max(0,state.displayItems.length-1));$("visibleCount").textContent=state.displayItems.length;renderChips();renderVirtual();renderTree();loadCurrentDetail()}
+function bucket(value,bounds,names){for(let i=0;i<bounds.length;i++)if(value<bounds[i])return names[i];return names[names.length-1]}
+function treeSection(title,key,entries,formatter=(x)=>x){const selected=state.filters[key];return `<details class="tree-group" open><summary>${title}<b>${entries.length}</b></summary><div class="tree-items">${entries.map(([value,count,extra])=>`<button class="tree-item ${selected.has(value)?"selected":""} ${extra||""}" data-kind="${key}" data-value="${esc(value)}">${formatter(value)}<span class="count">${count}</span></button>`).join("")||'<div class="tree-empty">empty</div>'}</div></details>`}
+function renderTree(){const regs=DEFAULT_REGISTERS.map(base=>{const r=state.registers[base.id];return [base.id,r.serials.size,base.id===state.activeRegister?"active-register":""]});const types=Object.entries(state.facets.types||{}).map(([a,b])=>[a,b]);const tags=Object.entries(state.facets.tags||{}).slice(0,60).map(([a,b])=>[a,b]);const cmp=Object.entries(state.facets.complexity||{}).map(([a,b])=>[a,b]);const lit=Object.entries(state.facets.literacy||{}).map(([a,b])=>[a,b]);$("tree").innerHTML=treeSection("REGISTERS","registers",regs,id=>`<span style="--register-color:${state.registers[id].color}"><i class="swatch"></i>${esc(state.registers[id].name)}</span>`)+treeSection("TYPE","types",types,v=>esc(v))+treeSection("TAGS","tags",tags,v=>"#"+esc(v))+treeSection("COMPLEXITY","complexity",cmp,v=>"CMP "+esc(v))+treeSection("LITERACY","literacy",lit,v=>"LIT "+esc(v));$("tree").querySelectorAll(".tree-item").forEach(btn=>btn.onclick=()=>{const kind=btn.dataset.kind,value=btn.dataset.value,set=state.filters[kind];set.has(value)?set.delete(value):set.add(value);if(kind==="registers")state.activeRegister=value;kind==="types"||kind==="tags"?loadPrompts():applyLocalFilters()})}
+function renderChips(){const labels={registers:"REG",types:"TYPE",tags:"TAG",complexity:"CMP",literacy:"LIT"};const chips=[];for(const [kind,set] of Object.entries(state.filters))for(const value of set)chips.push(`<button class="chip" data-kind="${kind}" data-value="${esc(value)}">${labels[kind]}:${esc(kind==="registers"?state.registers[value]?.name||value:value)} ×</button>`);$("filterChips").innerHTML=chips.join("");$("filterChips").querySelectorAll(".chip").forEach(btn=>btn.onclick=()=>{state.filters[btn.dataset.kind].delete(btn.dataset.value);btn.dataset.kind==="types"||btn.dataset.kind==="tags"?loadPrompts():applyLocalFilters()})}
+async function loadPrompts(){const requestId=++state.requestId;setStatus("LOADING",0);const query=new URLSearchParams({view:"compact",limit:String(PAGE_SIZE),offset:"0",q:$("search").value,sort:$("sort").value,tags:[...state.filters.tags].join(","),types:[...state.filters.types].join(","),complexity_buckets:[...state.filters.complexity].join(","),literacy_buckets:[...state.filters.literacy].join(",")});try{const first=await fetch(`/api/prompts?${query}`);if(!first.ok)throw new Error(`HTTP ${first.status}`);const data=await first.json();if(requestId!==state.requestId)return;let items=data.items||[];const pages=[];for(let offset=PAGE_SIZE;offset<data.total;offset+=PAGE_SIZE){const params=new URLSearchParams(query);params.set("offset",String(offset));pages.push(fetch(`/api/prompts?${params}`).then(r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}))}if(pages.length){const rest=await Promise.all(pages);if(requestId!==state.requestId)return;for(const page of rest)items.push(...page.items)}state.items=items;state.total=data.total||items.length;state.facets=data.facets||{};$("totalCount").textContent=state.total;applyLocalFilters();setStatus(`LOADED ${items.length}`)}catch(error){setStatus(`ERROR ${error.message}`,0)}}
+function parseMechanics(text){const match=String(text||"").match(/^Как работает:\s*(.*?)\.\s*Почему работает:\s*(.*?)\.\s*На выходе:\s*(.*?)\.?$/s);return match?{how:match[1],why:match[2],output:match[3]}:{how:text||"-",why:"-",output:"-"}}
+function highlight(value){let safe=esc(value);safe=safe.replace(/(&quot;[^&\n]{1,180}?&quot;|'[^'\n]{1,180}?')/g,'<span class="syn-quote">$1</span>');safe=safe.replace(/(\{\{[^}]+\}\}|\$\{[^}]+\}|&lt;[A-Za-z_][^&\n]*?&gt;|\{[A-Za-z_][^}\n]*\})/g,'<span class="syn-var">$1</span>');safe=safe.replace(/^(\s*(?:role|system|user|assistant|context|task|goal|constraints?|input|output|format|example|роль|контекст|задача|цель|ограничения|вход|выход|формат)\s*:)/gim,'<span class="syn-key">$1</span>');return safe.replace(/\b(you are|act as|your task|return only|must|never|ты —|твоя задача|верни только|обязательно|запрещено)\b/gi,'<span class="syn-role">$1</span>')}
+async function detailFor(item){if(!item)return null;if(state.detailCache.has(item.serial))return state.detailCache.get(item.serial);const response=await fetch(`/api/prompts/${encodeURIComponent(item.serial)}`);if(!response.ok)throw new Error(`HTTP ${response.status}`);const detail=await response.json();state.detailCache.set(item.serial,detail);return detail}
+async function loadCurrentDetail(){const item=current();if(!item){renderDetail(null);return}const serial=item.serial;$("previewSerial").textContent=serial;$("previewCode").textContent="LOADING_PROMPT...";try{const detail=await detailFor(item);if(current()?.serial===serial)renderDetail(detail)}catch(error){$("previewCode").textContent=`DETAIL_ERROR ${error.message}`}}
+function richText(value){return esc(value||"-").replace(/(Логика:|генерирует|сопоставляет|разбирает|создаёт|формирует|ограничения|результат)/gi,'<span class="syn-key">$1</span>').replace(/(\{[^}]+\}|&lt;[A-Za-z_][^&]*?&gt;)/g,'<span class="syn-var">$1</span>')}
+function renderDetail(item){if(!item){$("previewSerial").textContent="-";$("pTitle").textContent="NO_PROMPT_SELECTED";$("previewCode").textContent="Select a prompt with j/k or mouse.";return}const legacy=parseMechanics(item.description),tokens=item.token_estimate||{},learning=item.learning_complexity||{};$("previewSerial").textContent=item.serial;$("pTitle").textContent=item.title;$("pType").textContent=item.prompt_type;$("pCmp").textContent=item.complexity;$("pLit").textContent=item.literacy_score;$("pInputTokens").textContent=tokenRange(tokens,"input");$("pOutputTokens").textContent=tokenRange(tokens,"output");$("pTotalTokens").textContent=tokenRange(tokens,"total");$("previewCode").innerHTML=highlight(item.prompt_body);$("pHow").innerHTML=richText(item.how_it_works||legacy.how);$("pWhy").innerHTML=richText(item.why_it_works||legacy.why);$("pStructure").innerHTML=(item.structure||[]).map(x=>`<span class="pill">${esc(x)}</span>`).join(" → ")||"-";$("pCoverage").innerHTML=(item.coverage||[]).map(x=>`<span class="pill">${esc(x)}</span>`).join(" ")||"-";$("pOutput").innerHTML=richText(item.expected_output||legacy.output);$("pLearning").innerHTML=`<span class="score ${scoreClass(learning.score||item.complexity)}">${esc(learning.level||"-")} / ${learning.score||item.complexity}</span> — ${esc(learning.reason||"-")}`;$("pTags").innerHTML=(item.tags||[]).map(x=>`<span class="pill">#${esc(x)}</span>`).join("")||"-";$("pMarks").innerHTML=(item.special_marks||[]).map(x=>`<span class="pill mark">${esc(x)}</span>`).join("")||"-";$("pRemarks").innerHTML=(item.remarks||[]).map(x=>`<li>${esc(x)}</li>`).join("")||"<li>Без критических замечаний.</li>";renderPreviewRegisters()}
+function renderPreviewRegisters(){$("pRegisters").textContent=current()?memberships(current().serial).map(r=>r.name).join(", ")||"-":"-"}
+function renderFooter(){const reg=selectedRegister();$("activeRegister").style.setProperty("--register-color",reg.color);$("activeRegister").textContent=`${reg.name} [${reg.serials.size}]`;$("rangeStatus").textContent=state.visualAnchor===null?"NORMAL":`VISUAL ${Math.abs(state.cursor-state.visualAnchor)+1}`}
+function openRegisters(){renderRegisters();$("registerDialog").showModal()}
+function renderRegisters(){$("registerList").innerHTML=DEFAULT_REGISTERS.map((base,i)=>{const r=state.registers[base.id];return `<div class="register-option ${base.id===state.activeRegister?"active":""}" data-register="${base.id}" style="--register-color:${r.color}"><code>${i+1}</code><input value="${esc(r.name)}" maxlength="32" aria-label="Register name ${i+1}"><span>${r.serials.size} items</span></div>`}).join("");$("registerList").querySelectorAll(".register-option").forEach(row=>{row.onclick=e=>{if(e.target.tagName!=="INPUT")selectRegister(row.dataset.register)};row.querySelector("input").onchange=e=>{state.registers[row.dataset.register].name=e.target.value.trim()||DEFAULT_REGISTERS.find(x=>x.id===row.dataset.register).name;saveLocal();renderTree();renderFooter()}})}
+function selectRegister(id){if(!state.registers[id])return;state.activeRegister=id;saveLocal();renderRegisters();renderTree();renderFooter();setStatus(`ACTIVE ${state.registers[id].name}`)}
+const COMMANDS=[
+ ["1","Focus groups",()=>setPane(1)],["2","Focus prompts",()=>setPane(2)],["3","Focus preview",()=>setPane(3)],["/","Search prompts",()=>$("search").focus()],["r","Select color register",openRegisters],["Space","Toggle mark",()=>toggleMark()],["v","Visual range",toggleVisual],["e","Export registers",openExport],["a","Analyze active register",openAnalysis],["b","Toggle groups pane",toggleTree],["p","Toggle preview pane",togglePreview],["c","Copy prompt body",copyCurrent],["?","Show keymap",openHelp]
+];
+function executeCommand(index){$("commandDialog").close();COMMANDS[index]?.[2]()}
+function openCommands(){$("commandSearch").value="";state.commandCursor=0;renderCommands();$("commandDialog").showModal();setTimeout(()=>$("commandSearch").focus(),0)}
+function renderCommands(){const q=$("commandSearch").value.toLowerCase(),visible=COMMANDS.map((x,i)=>({x,i})).filter(o=>!q||o.x[1].toLowerCase().includes(q));state.commandCursor=Math.max(0,Math.min(state.commandCursor,visible.length-1));$("commandList").innerHTML=visible.map((o,i)=>`<div class="command ${i===state.commandCursor?"active":""}" data-command-index="${o.i}"><kbd>${esc(o.x[0])}</kbd><span>${esc(o.x[1])}</span></div>`).join("");$("commandList").querySelectorAll(".command").forEach(row=>row.onclick=()=>executeCommand(Number(row.dataset.commandIndex)))}
+function openHelp(){$("helpGrid").innerHTML=COMMANDS.map(x=>`<kbd>${esc(x[0])}</kbd><span>${esc(x[1])}</span>`).join("")+"<kbd>j/k</kbd><span>Navigate rows</span><kbd>g/G</kbd><span>First / last row</span><kbd>u</kbd><span>Remove active mark</span><kbd>Esc</kbd><span>Cancel mode / close</span>";$("helpDialog").showModal()}
+function toggleTree(){state.treeVisible=!state.treeVisible;syncLayout();saveLocal();if(!state.treeVisible&&state.pane===1)setPane(2)}function togglePreview(){state.previewVisible=!state.previewVisible;syncLayout();saveLocal();if(!state.previewVisible&&state.pane===3)setPane(2)}
+async function copyCurrent(){const item=current();if(!item)return;try{const detail=await detailFor(item);await navigator.clipboard.writeText(detail.prompt_body);setStatus("COPIED") }catch(error){setStatus(`COPY_ERROR ${error.message}`,0)}}
+function registerPayload(mode){const regs=mode==="active"?[selectedRegister()]:Object.values(state.registers).filter(r=>r.serials.size);return regs.map(r=>({id:r.id,name:r.name,color:r.color,serials:[...r.serials]}))}
+function openExport(){const active=selectedRegister();$("exportSummary").textContent=`Active ${active.name}: ${active.serials.size} prompts. All registers: ${Object.values(state.registers).reduce((n,r)=>n+r.serials.size,0)} marks.`;$("exportDialog").showModal()}
+async function exportRegisters(mode,format){const registers=registerPayload(mode);if(!registers.length||!registers.some(r=>r.serials.length)){setStatus("EXPORT_EMPTY",0);return}setStatus("EXPORTING",0);const response=await fetch("/api/prompts/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({format,registers})});if(!response.ok){setStatus(`EXPORT_ERROR ${response.status}`,0);return}const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`prompt-register-${mode}.${format==="json"?"json":"md"}`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);$("exportDialog").close();setStatus("EXPORTED")}
+function openAnalysis(){$("analysisDialog").showModal();$("analysisAuth").hidden=true;$("analysisMeta").textContent=`${selectedRegister().name} // ${selectedRegister().serials.size} prompts // max 20`;$("analysisResult").textContent="Press [a] or click Analyze to run.";runAnalysis()}
+async function runAnalysis(){const reg=selectedRegister(),serials=[...reg.serials];if(!serials.length){$("analysisResult").textContent="REGISTER_EMPTY";return}if(serials.length>20){$("analysisResult").textContent="LIMIT_EXCEEDED // maximum 20 prompts";return}$("analysisResult").textContent="ANALYZING...";const headers={"Content-Type":"application/json"};if(state.authHeader)headers.Authorization=state.authHeader;const response=await fetch("/api/prompts/analyze",{method:"POST",headers,body:JSON.stringify({serials,register_name:reg.name})});if(response.status===401){$("analysisAuth").hidden=false;$("analysisResult").textContent="AUTH_REQUIRED";return}const data=await response.json().catch(()=>({detail:`HTTP ${response.status}`}));if(!response.ok){$("analysisResult").textContent=`ANALYSIS_ERROR // ${data.detail||response.status}`;return}$("analysisAuth").hidden=true;$("analysisMeta").textContent=`${data.provider} / ${data.model} / ${data.usage.total_tokens} tok / $${data.estimated_cost}`;$("analysisResult").textContent=JSON.stringify(data.result,null,2)}
+function authenticateAnalysis(){const user=$("analysisUser").value,pass=$("analysisPass").value;state.authHeader="Basic "+btoa(unescape(encodeURIComponent(`${user}:${pass}`)));runAnalysis()}
+function closeTop(){const dialog=[...document.querySelectorAll("dialog")].find(d=>d.open);if(dialog){dialog.close();return true}if(state.visualAnchor!==null){state.visualAnchor=null;renderVirtual();return true}if(document.activeElement===$("search")){$("search").blur();return true}return false}
+function clearFilters(){for(const set of Object.values(state.filters))set.clear();loadPrompts()}
+function isTyping(){return ["INPUT","TEXTAREA","SELECT"].includes(document.activeElement?.tagName)}
+function handleKey(e){const dialog=[...document.querySelectorAll("dialog")].find(d=>d.open);if(e.key==="Escape"){if(closeTop())e.preventDefault();return}if(dialog===$("registerDialog")&&/^[1-5]$/.test(e.key)){e.preventDefault();selectRegister(DEFAULT_REGISTERS[Number(e.key)-1].id);return}if(dialog===$("commandDialog")){if(e.key==="ArrowDown"||e.key==="j"){e.preventDefault();state.commandCursor++;renderCommands()}else if(e.key==="ArrowUp"||e.key==="k"){e.preventDefault();state.commandCursor--;renderCommands()}else if(e.key==="Enter"){e.preventDefault();const row=$("commandList").querySelectorAll(".command")[state.commandCursor];if(row)executeCommand(Number(row.dataset.commandIndex))}return}if(dialog||isTyping())return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();openCommands();return}const key=e.key;if(key==="1"||key==="2"||key==="3"){setPane(Number(key))}else if(key==="j"||key==="ArrowDown"){e.preventDefault();move(1)}else if(key==="k"||key==="ArrowUp"){e.preventDefault();move(-1)}else if(key==="h"){setPane(state.pane-1)}else if(key==="l"){setPane(state.pane+1)}else if(key==="g"){jump(0)}else if(key==="G"){jump(state.displayItems.length-1)}else if(key===" "){e.preventDefault();toggleMark()}else if(key==="v"){toggleVisual()}else if(key==="u"){toggleMark(true)}else if(key==="/"){e.preventDefault();$("search").focus()}else if(key===":" ){openCommands()}else if(key==="?"){openHelp()}else if(key==="r"){openRegisters()}else if(key==="e"){openExport()}else if(key==="E"){openExport()}else if(key==="a"){openAnalysis()}else if(key==="c"){copyCurrent()}else if(key==="b"){toggleTree()}else if(key==="p"){togglePreview()}else if(key==="Enter"){setPane(3);loadCurrentDetail()}}
+let searchTimer;$("search").addEventListener("input",()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadPrompts,180)});$("sort").onchange=loadPrompts;$("viewport").onscroll=renderVirtual;$("clearFilters").onclick=clearFilters;document.addEventListener("keydown",handleKey);document.querySelectorAll("[data-close]").forEach(x=>x.onclick=()=>x.closest("dialog").close());document.querySelectorAll("dialog").forEach(dialog=>dialog.addEventListener("close",()=>document.activeElement?.blur()));const NAMED_COMMANDS={registers:openRegisters,"export-active":openExport,copy:copyCurrent,analyze:openAnalysis};document.querySelectorAll("[data-command]").forEach(x=>x.onclick=()=>NAMED_COMMANDS[x.dataset.command]?.());document.querySelectorAll(".pane").forEach((pane,index)=>pane.addEventListener("mousedown",()=>setPane(index+1)));document.querySelectorAll("[data-export]").forEach(x=>x.onclick=()=>{const [mode,format]=x.dataset.export.split(":");exportRegisters(mode,format)});$("analysisLogin").onclick=authenticateAnalysis;$("commandSearch").oninput=renderCommands;window.addEventListener("resize",renderVirtual);
+loadLocal();setPane(1);renderTree();renderFooter();loadPrompts();
+</script>
 </body>
 </html>

@@ -5,12 +5,20 @@ import pytest
 from prompt_ops_app import (
     DEFAULT_SOURCE_BLUEPRINTS,
     build_prompt_projection,
+    build_prompt_register_export,
     classify_artifact,
+    compact_prompt_item,
+    filter_prompt_items,
     extract_prompt_body,
     fetch_x_search_items,
     prompt_literacy_score,
+    prompt_mechanics,
     prompt_mechanics_description,
+    prompt_facets,
+    prompt_tags,
+    prompt_token_estimate,
     public_prompt_item,
+    sort_prompt_items,
     source_artifact_group,
 )
 
@@ -76,6 +84,12 @@ def test_prompt_projection_normalizes_public_prompt():
     assert projected["literacy_score"] >= 70
     assert "STRUCTURED_OUTPUT" in projected["special_marks"]
     assert "HAS_VARIABLES" in projected["special_marks"]
+    assert 3 <= len(projected["tags"]) <= 5
+    assert projected["how_it_works"]
+    assert projected["structure"]
+    assert projected["coverage"]
+    assert projected["token_estimate"]["total"]["max"] > projected["token_estimate"]["input"]["max"]
+    assert "references" not in projected
 
 
 def test_prompt_projection_rejects_private_and_non_prompt_materials():
@@ -119,6 +133,13 @@ def test_public_prompt_item_is_a_strict_allowlist():
         "title",
         "prompt_body",
         "description",
+        "how_it_works",
+        "why_it_works",
+        "structure",
+        "coverage",
+        "expected_output",
+        "learning_complexity",
+        "token_estimate",
         "tags",
         "complexity",
         "literacy_score",
@@ -150,3 +171,101 @@ def test_prompt_output_intent_avoids_code_keyword_false_positive():
     )
     assert "переведённый и адаптированный текст" in description
     assert "техническая реализация" not in description
+
+
+def test_missing_prompt_tags_are_generated_in_english_with_specific_labels():
+    tags, origin = prompt_tags(
+        "Product FAQ builder",
+        "Generate a complete FAQ for {product}. Group questions and return Markdown.",
+        "Prompt",
+        [],
+    )
+    assert 3 <= len(tags) <= 5
+    assert tags[:2] == ["faq-generation", "question-coverage"]
+    assert all(tag == tag.lower() and " " not in tag for tag in tags)
+    assert origin == "generated"
+    fallback_tags, _ = prompt_tags("Language Detection", "Identify the language used in the supplied text.", "Prompt", [])
+    assert fallback_tags[0] == "language-detection"
+
+
+def test_prompt_mechanics_and_token_estimate_are_structured_without_references():
+    body = "Act as a researcher. Compare {product_a} and {product_b}. Return only JSON."
+    mechanics = prompt_mechanics("Product comparison", body, 68)
+    estimate = prompt_token_estimate(body, mechanics["expected_output"])
+    assert "Сопоставляет" in mechanics["how_it_works"]
+    assert mechanics["structure"]
+    assert mechanics["coverage"]
+    assert mechanics["learning_complexity"]["level"] == "средняя"
+    assert estimate["input"]["max"] > estimate["input"]["min"]
+    assert estimate["total"]["max"] == estimate["input"]["max"] + estimate["output"]["max"]
+    assert "references" not in mechanics
+
+
+
+def prompt_fixture(serial, title, tags, prompt_type, complexity, literacy, published_ts):
+    return {
+        "id": serial,
+        "serial": serial,
+        "title": title,
+        "prompt_body": f"Act as {title}. Return only JSON.",
+        "description": "Как работает: role. Почему работает: focus. На выходе: JSON.",
+        "tags": tags,
+        "complexity": complexity,
+        "literacy_score": literacy,
+        "special_marks": ["STRUCTURED_OUTPUT"],
+        "remarks": ["test"],
+        "prompt_type": prompt_type,
+        "published_ts": published_ts,
+        "path": "/private/path",
+    }
+
+
+def test_dense_prompt_filters_use_or_within_groups_and_and_between_groups():
+    prompts = [
+        prompt_fixture("P-000001", "Alpha", ["agent"], "Prompt", 45, 60, 1),
+        prompt_fixture("P-000002", "Beta", ["image"], "Image Prompt", 85, 90, 2),
+        prompt_fixture("P-000003", "Gamma", ["video"], "Video Prompt", 70, 75, 3),
+    ]
+    filtered = filter_prompt_items(
+        prompts,
+        tags={"agent", "image"},
+        prompt_types={"prompt", "image prompt"},
+        complexity_buckets={"40-59", "80-100"},
+    )
+    assert [item["serial"] for item in filtered] == ["P-000001", "P-000002"]
+    assert filter_prompt_items(prompts, tags={"agent"}, prompt_types={"image prompt"}) == []
+
+
+def test_dense_prompt_sort_facets_and_compact_projection():
+    prompts = [
+        prompt_fixture("P-000001", "Zulu", ["agent", "json"], "Prompt", 45, 60, 1),
+        prompt_fixture("P-000002", "Alpha", ["json"], "Image Prompt", 85, 90, 2),
+    ]
+    assert [item["serial"] for item in sort_prompt_items(prompts, "title")] == ["P-000002", "P-000001"]
+    assert sort_prompt_items(prompts, "complexity")[0]["serial"] == "P-000002"
+    facets = prompt_facets(prompts)
+    assert facets["tags"]["json"] == 2
+    assert facets["complexity"]["40-59"] == 1
+    assert facets["complexity"]["80-100"] == 1
+    compact = compact_prompt_item(prompts[0])
+    assert "prompt_body" not in compact
+    assert "remarks" not in compact
+    assert "path" not in compact
+
+
+def test_prompt_register_exports_are_allowlisted_and_fence_safe():
+    prompt = prompt_fixture("P-000001", "Exporter", ["json"], "Prompt", 60, 80, 1)
+    prompt["prompt_body"] = "Use ``` inside the prompt"
+    content, media_type = build_prompt_register_export([
+        {"id": "keep", "name": "KEEP", "color": "#57ff8f", "prompts": [prompt]},
+    ], "json")
+    assert media_type == "application/json"
+    assert "/private/path" not in content
+    assert '"serial": "P-000001"' in content
+    assert '"token_estimate"' in content
+    assert '"references"' not in content
+    markdown, markdown_type = build_prompt_register_export([
+        {"id": "keep", "name": "KEEP", "color": "#57ff8f", "prompts": [prompt]},
+    ], "md")
+    assert markdown_type == "text/markdown"
+    assert "````text" in markdown
