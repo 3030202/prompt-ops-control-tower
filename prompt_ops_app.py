@@ -68,7 +68,7 @@ MAX_FILE_BYTES = 80_000
 MAX_SNIPPET_CHARS = 1_400
 MAX_PROMPT_ITEMS = 120
 DUPE_TTL_SECONDS = 60 * 60 * 24 * 14
-GALLERY_CATEGORIES = {"Prompt", "Pipeline", "Instruction", "Skill", "Agent", "Rule"}
+GALLERY_CATEGORIES = {"Prompt", "System Prompt", "Image Prompt", "Video Prompt", "NotebookLM", "Distillate", "Pipeline", "Instruction", "Skill", "Agent", "Rule"}
 
 DEFAULT_SOURCE_BLUEPRINTS = [
     {
@@ -273,7 +273,213 @@ DEFAULT_SOURCE_BLUEPRINTS = [
         "cadence_reason": "Спецификация меняется редко; одного snapshot в сутки достаточно.",
         "preset_group": "Agent rules",
     },
+    {
+        "id": "promptcentral_reddit",
+        "name": "PromptCentral community",
+        "kind": "rss",
+        "url": "https://old.reddit.com/r/PromptCentral/.rss",
+        "enabled": False,
+        "artifact_group": "General Prompts",
+        "recommended_interval_seconds": 14400,
+        "cadence_reason": "Community RSS часто ограничивает запросы; четырёхчасовой poll снижает шум и rate-limit.",
+    },
+    {
+        "id": "promptport_library",
+        "name": "PromptPort library",
+        "kind": "web_page",
+        "url": "https://promptport.ai/",
+        "enabled": False,
+        "artifact_group": "Prompt Libraries",
+        "recommended_interval_seconds": 86400,
+        "cadence_reason": "Каталог меняется пакетами; одного snapshot в сутки достаточно.",
+    },
+    {
+        "id": "promptportal_library",
+        "name": "PromptPortal library",
+        "kind": "web_page",
+        "url": "https://promptportal.io/",
+        "enabled": False,
+        "artifact_group": "Prompt Libraries",
+        "recommended_interval_seconds": 86400,
+        "cadence_reason": "Витрину без RSS достаточно индексировать раз в сутки.",
+    },
+    {
+        "id": "prompta_library",
+        "name": "Prompta image + video",
+        "kind": "web_page",
+        "url": "https://prompta.co/en/",
+        "enabled": False,
+        "artifact_group": "Prompt Libraries",
+        "recommended_interval_seconds": 86400,
+        "cadence_reason": "Каталог image/video-промптов обновляется заметно реже новостных лент.",
+    },
+    {
+        "id": "nanobanana_x_prompts",
+        "name": "Trending image prompts from X",
+        "kind": "github_atom",
+        "repo": "jau123/nanobanana-trending-prompts",
+        "branch": "main",
+        "enabled": False,
+        "artifact_group": "Image / Visual",
+        "recommended_interval_seconds": 21600,
+        "cadence_reason": "Курируемая выгрузка X обновляется пакетами; шесть часов сохраняют свежесть без прямого scraping.",
+    },
+    {
+        "id": "veo_prompts",
+        "name": "Veo prompts",
+        "kind": "github_atom",
+        "repo": "ishandutta2007/veo_prompts",
+        "branch": "main",
+        "enabled": False,
+        "artifact_group": "Video / Motion",
+        "recommended_interval_seconds": 21600,
+        "cadence_reason": "Видео-промпты меняются пакетами; шестичасовой cadence достаточен.",
+    },
+    {
+        "id": "veo_prompting_guide",
+        "name": "Veo 3 Prompting Guide",
+        "kind": "github_atom",
+        "repo": "snubroot/Veo-3-Prompting-Guide",
+        "branch": "main",
+        "enabled": False,
+        "artifact_group": "Video / Motion",
+        "recommended_interval_seconds": 43200,
+        "cadence_reason": "Гайд меняется редко; два обновления в сутки достаточно.",
+    },
+    {
+        "id": "notebooklm_usage_prompts",
+        "name": "NotebookLM usage + steering prompts",
+        "kind": "web_page",
+        "url": "https://gist.github.com/rxctionzz/8ddb59f210dbeccbdae3fbaf135f5b5b",
+        "enabled": False,
+        "artifact_group": "NotebookLM",
+        "recommended_interval_seconds": 86400,
+        "cadence_reason": "Пользовательский guide/gist достаточно проверять раз в сутки.",
+    },
+    {
+        "id": "notebooklm_py_skill",
+        "name": "NotebookLM automation skill",
+        "kind": "github_atom",
+        "repo": "teng-lin/notebooklm-py",
+        "branch": "main",
+        "enabled": False,
+        "artifact_group": "NotebookLM",
+        "recommended_interval_seconds": 21600,
+        "cadence_reason": "Активный automation toolkit: шестичасовой poll ловит новые prompt workflows.",
+    },
+    {
+        "id": "user_prompt_library",
+        "name": "User-refined prompt library",
+        "kind": "github_atom",
+        "repo": "shawnewallace/prompt-library",
+        "branch": "main",
+        "enabled": False,
+        "artifact_group": "System Prompts",
+        "recommended_interval_seconds": 21600,
+        "cadence_reason": "Пользовательские agents/instructions обновляются нерегулярно; шесть часов безопасны.",
+    },
+    {
+        "id": "system_prompts_models",
+        "name": "System prompts + AI models",
+        "kind": "github_atom",
+        "repo": "x1xhlol/system-prompts-and-models-of-ai-tools",
+        "branch": "main",
+        "enabled": False,
+        "artifact_group": "System Prompts",
+        "recommended_interval_seconds": 21600,
+        "cadence_reason": "Коллекция системных промптов обновляется пакетами; шесть часов достаточно.",
+    },
+    {
+        "id": "universal_prompt_distillation",
+        "name": "Universal prompt distillation",
+        "kind": "web_page",
+        "url": "https://gist.github.com/bhagyeshsp/b2728f41ef96d14fff76f52607aca684",
+        "enabled": False,
+        "artifact_group": "Distillates",
+        "recommended_interval_seconds": 86400,
+        "cadence_reason": "Точечный distillation gist меняется редко; суточной проверки достаточно.",
+    },
+    {
+        "id": "x_general_prompts",
+        "name": "X: system + prompt engineering",
+        "kind": "x_search",
+        "query": '("system prompt" OR "prompt engineering") -is:retweet lang:en',
+        "enabled": False,
+        "artifact_group": "General Prompts",
+        "recommended_interval_seconds": 7200,
+        "cadence_reason": "Recent Search имеет квоты; двухчасовой poll и дедупликация экономят API traffic.",
+    },
+    {
+        "id": "x_image_prompts",
+        "name": "X: image prompts",
+        "kind": "x_search",
+        "query": '("image prompt" OR "Midjourney prompt" OR "Flux prompt") -is:retweet lang:en',
+        "enabled": False,
+        "artifact_group": "Image / Visual",
+        "recommended_interval_seconds": 7200,
+        "cadence_reason": "Двухчасовой poll даёт живой сигнал без постоянного расхода X API quota.",
+    },
+    {
+        "id": "x_video_prompts",
+        "name": "X: video prompts",
+        "kind": "x_search",
+        "query": '("Veo prompt" OR "Runway prompt" OR "Sora prompt") -is:retweet lang:en',
+        "enabled": False,
+        "artifact_group": "Video / Motion",
+        "recommended_interval_seconds": 7200,
+        "cadence_reason": "Видео-поток шумный: двухчасовое окно плюс semantic dedupe удерживают расход.",
+    },
+    {
+        "id": "x_notebooklm_prompts",
+        "name": "X: NotebookLM prompts",
+        "kind": "x_search",
+        "query": '("NotebookLM prompt" OR "Audio Overview prompt") -is:retweet lang:en',
+        "enabled": False,
+        "artifact_group": "NotebookLM",
+        "recommended_interval_seconds": 10800,
+        "cadence_reason": "Нишевой поток достаточно проверять каждые три часа.",
+    },
 ]
+
+SOURCE_GROUP_ORDER = [
+    "General Prompts", "System Prompts", "Image / Visual", "Video / Motion",
+    "NotebookLM", "Distillates", "Agent / Rules", "MCP / Tools",
+    "Prompt Libraries", "Editorial / Discovery", "Red Team", "Workspace", "Other",
+]
+
+SOURCE_GROUP_BY_ID = {
+    "cursor_latest": "Editorial / Discovery",
+    "cursor_announcements": "Editorial / Discovery",
+    "habr_articles": "Editorial / Discovery",
+    "habr_ai": "Editorial / Discovery",
+    "agents_md_commits": "Agent / Rules",
+    "agent_rules_books_commits": "Agent / Rules",
+    "awesome_agent_conventions": "Agent / Rules",
+    "agents_md_site": "Agent / Rules",
+    "prompts_chat_commits": "General Prompts",
+    "promptengineering_reddit": "General Prompts",
+    "chatgptpromptgenius_reddit": "General Prompts",
+    "awesome_prompts_ai_boost": "General Prompts",
+    "awesome_claude_prompts": "General Prompts",
+    "official_mcp_servers": "MCP / Tools",
+    "awesome_mcp_servers": "MCP / Tools",
+    "github_mcp_server": "MCP / Tools",
+    "mcpbook_ru": "MCP / Tools",
+    "mcpdb_ru": "MCP / Tools",
+    "mcp_catalog_ru": "MCP / Tools",
+    "jailbreak_llms_research": "Red Team",
+}
+
+
+def source_artifact_group(source: dict[str, Any]) -> str:
+    explicit = str(source.get("artifact_group", "")).strip()
+    if explicit:
+        return explicit
+    source_id = str(source.get("id", ""))
+    if source_id.startswith("workspace_") or source.get("kind") == "workspace":
+        return "Workspace"
+    return SOURCE_GROUP_BY_ID.get(source_id, "Other")
+
 
 
 @dataclass(frozen=True)
@@ -468,9 +674,19 @@ def dedupe_text(*parts: str) -> str:
 def classify_artifact(path: str, text: str) -> tuple[str, int]:
     lowered_path = path.lower()
     lowered = text.lower()
+    if "notebooklm" in lowered_path or "notebooklm" in lowered:
+        return "NotebookLM", 87
+    if any(token in lowered for token in ["video prompt", "veo prompt", "sora prompt", "runway prompt", "text-to-video", "image-to-video"]):
+        return "Video Prompt", 86
+    if any(token in lowered for token in ["image prompt", "midjourney prompt", "flux prompt", "text-to-image", "inpainting", "outpainting", "negative prompt"]):
+        return "Image Prompt", 86
+    if any(token in lowered for token in ["prompt distillation", "context distillation", "distill this prompt", "compress the prompt"]):
+        return "Distillate", 89
+    if any(token in lowered for token in ["system prompt", "system_prompt", "developer prompt", "custom instructions"]):
+        return "System Prompt", 88
     if "skill" in lowered_path or "skill.md" in lowered_path or "skill" in lowered:
         return "Skill", 88
-    if any(token in lowered for token in ["system prompt", "response_format", "messages", "temperature"]):
+    if any(token in lowered for token in ["response_format", "messages", "temperature"]):
         return "Prompt", 84
     if any(token in lowered_path for token in ["dockerfile", "compose", "workflow", ".github/"]) or any(
         token in lowered for token in ["build", "deploy", "pipeline", "asyncio.create_task", "uvicorn"]
@@ -491,6 +707,14 @@ def derive_tags(path: str, text: str, category: str) -> list[str]:
     keyword_map = [
         ("prompt", "prompt"),
         ("system prompt", "system"),
+        ("notebooklm", "notebooklm"),
+        ("midjourney", "image"),
+        ("text-to-image", "image"),
+        ("inpainting", "image-edit"),
+        ("veo", "video"),
+        ("sora", "video"),
+        ("text-to-video", "video"),
+        ("distillation", "distillate"),
         ("template", "template"),
         ("workflow", "workflow"),
         ("pipeline", "pipeline"),
@@ -520,7 +744,7 @@ def derive_tags(path: str, text: str, category: str) -> list[str]:
 
 
 def derive_complexity(category: str, text: str) -> int:
-    base = {"Prompt": 65, "Pipeline": 70, "Instruction": 52, "Skill": 76, "Agent": 68, "Rule": 58}.get(category, 18)
+    base = {"Prompt": 65, "System Prompt": 68, "Image Prompt": 62, "Video Prompt": 68, "NotebookLM": 66, "Distillate": 72, "Pipeline": 70, "Instruction": 52, "Skill": 76, "Agent": 68, "Rule": 58}.get(category, 18)
     base += min(25, len(text) // 120)
     return int(clamp(base, 1, 100))
 
@@ -615,6 +839,7 @@ def default_source_catalog(cfg: Config) -> list[dict[str, Any]]:
     catalog: list[dict[str, Any]] = []
     for blueprint in DEFAULT_SOURCE_BLUEPRINTS:
         item = dict(blueprint)
+        item.setdefault("artifact_group", source_artifact_group(item))
         item.setdefault("manual_interval_seconds", None)
         item.setdefault("empty_streak", 0)
         item.setdefault("error_streak", 0)
@@ -633,6 +858,7 @@ def default_source_catalog(cfg: Config) -> list[dict[str, Any]]:
                 "name": f"Workspace: {root}",
                 "kind": "workspace",
                 "root": root,
+                "artifact_group": "Workspace",
                 "enabled": True,
                 "recommended_interval_seconds": 900,
                 "cadence_reason": "Локальный workspace меняется быстро и требует частого поллинга.",
@@ -1135,6 +1361,7 @@ def build_record(item: dict[str, Any], analysis: dict[str, Any], provider_name: 
         "source_id": item.get("source_id", ""),
         "source_name": item.get("source_name", ""),
         "source_kind": item.get("source_kind", ""),
+        "artifact_group": item.get("artifact_group", "Other"),
         "source_url": item.get("source_url", ""),
         "type": category,
         "rating": rating,
@@ -1238,6 +1465,7 @@ async def fetch_rss_items(client: AsyncClient, source: dict[str, Any]) -> list[d
                 "source_id": source["id"],
                 "source_name": source["name"],
                 "source_kind": source["kind"],
+                "artifact_group": source_artifact_group(source),
                 "source_url": source["url"],
                 "title": title,
                 "summary": summary,
@@ -1275,6 +1503,7 @@ async def fetch_github_atom_items(client: AsyncClient, source: dict[str, Any]) -
                 "source_id": source["id"],
                 "source_name": source["name"],
                 "source_kind": source["kind"],
+                "artifact_group": source_artifact_group(source),
                 "source_url": url,
                 "title": title,
                 "summary": summary,
@@ -1305,6 +1534,7 @@ async def fetch_web_page_items(client: AsyncClient, source: dict[str, Any]) -> l
         "source_id": source["id"],
         "source_name": source["name"],
         "source_kind": source["kind"],
+        "artifact_group": source_artifact_group(source),
         "source_url": source["url"],
         "title": title,
         "summary": cleaned[:220],
@@ -1347,6 +1577,7 @@ async def scan_workspace_root(root: str) -> list[dict[str, Any]]:
                     "source_id": f"workspace_{slugify(str(root_path))}",
                     "source_name": f"Workspace: {root_path}",
                     "source_kind": "workspace",
+                    "artifact_group": "Workspace",
                     "source_url": str(root_path),
                     "title": path.name,
                     "summary": excerpt[:200],
@@ -1355,6 +1586,46 @@ async def scan_workspace_root(root: str) -> list[dict[str, Any]]:
                     "origin": "workspace",
                 }
             )
+    return items
+
+
+async def fetch_x_search_items(client: AsyncClient, source: dict[str, Any]) -> list[dict[str, Any]]:
+    bearer_token = os.getenv("X_BEARER_TOKEN", "").strip()
+    if not bearer_token:
+        raise RuntimeError("X_BEARER_TOKEN is required for x_search sources")
+    response = await client.get(
+        "https://api.x.com/2/tweets/search/recent",
+        params={
+            "query": source["query"],
+            "max_results": 10,
+            "tweet.fields": "created_at,author_id,lang",
+        },
+        headers={"Authorization": f"Bearer {bearer_token}"},
+        timeout=20.0,
+    )
+    response.raise_for_status()
+    items: list[dict[str, Any]] = []
+    for tweet in response.json().get("data", []):
+        tweet_id = str(tweet.get("id", ""))
+        text = str(tweet.get("text", "")).strip()
+        if not tweet_id or not text:
+            continue
+        link = f"https://x.com/i/web/status/{tweet_id}"
+        published = tweet.get("created_at") or iso_now()
+        items.append({
+            "text": f"X post: {text}\nLink: {link}",
+            "path": link,
+            "source_id": source["id"],
+            "source_name": source["name"],
+            "source_kind": source["kind"],
+            "artifact_group": source_artifact_group(source),
+            "source_url": link,
+            "title": normalize_ws(text)[:120],
+            "summary": normalize_ws(text)[:220],
+            "published_at": published,
+            "published_ts": parse_iso_ts(published),
+            "origin": "x_search",
+        })
     return items
 
 
@@ -1370,6 +1641,8 @@ async def fetch_feed_items(client: AsyncClient, source: dict[str, Any]) -> list[
         return await fetch_github_atom_items(client, source)
     if kind == "web_page":
         return await fetch_web_page_items(client, source)
+    if kind == "x_search":
+        return await fetch_x_search_items(client, source)
     return []
 
 
@@ -1757,6 +2030,27 @@ def render_source_card(source: dict[str, Any]) -> str:
     """
 
 
+def render_source_groups(sources: list[dict[str, Any]]) -> str:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for source in sources:
+        grouped[source_artifact_group(source)].append(source)
+    if not grouped:
+        return '<div class="empty">NO_ACTIVE_SOURCES</div>'
+    order = {name: index for index, name in enumerate(SOURCE_GROUP_ORDER)}
+    sections = []
+    for group_name in sorted(grouped, key=lambda name: (order.get(name, 999), name.lower())):
+        group_sources = grouped[group_name]
+        group_key = slugify(group_name)
+        rows = "".join(render_source_card(source) for source in group_sources)
+        enabled_count = sum(bool(source.get("enabled", True)) for source in group_sources)
+        sections.append(
+            f'<details class="source-group" data-source-group="{html.escape(group_key, quote=True)}" open>'
+            f'<summary><span>{html.escape(group_name)}</span><small>{enabled_count}/{len(group_sources)} on</small></summary>'
+            f'<div class="source-group-body">{rows}</div></details>'
+        )
+    return "".join(sections)
+
+
 def render_artifact_card(item: dict[str, Any]) -> str:
     score = int(item.get("rating", 0) or 0)
     score_cls = "high" if score >= 70 else "mid" if score >= 40 else "low"
@@ -1834,6 +2128,7 @@ def render_source_form() -> str:
         <option value="rss">rss</option>
         <option value="github_atom">github_atom</option>
         <option value="web_page">web_page</option>
+        <option value="x_search">x_search</option>
         <option value="workspace">workspace</option>
     """
     return f"""
@@ -1847,6 +2142,8 @@ def render_source_form() -> str:
             <input id="newSourceBranch" placeholder="Branch" value="main" />
             <input id="newSourceInterval" type="number" min="30" step="30" value="3600" placeholder="Interval seconds" />
             <input id="newSourceReason" placeholder="Cadence reason" />
+            <input id="newSourceGroup" placeholder="Artifact group" value="General Prompts" />
+            <input id="newSourceQuery" placeholder="X recent-search query" />
             <label class="toggle"><input id="newSourceEnabled" type="checkbox" checked /> enabled</label>
         </div>
         <div class="panel-actions">
@@ -2010,6 +2307,7 @@ async def add_source(payload: dict[str, Any] = Body(...), username: str = Depend
         "id": source_id,
         "name": source_name,
         "kind": kind,
+        "artifact_group": str(payload.get("artifact_group", "Other")).strip() or "Other",
         "enabled": bool(payload.get("enabled", True)),
         "recommended_interval_seconds": int(payload.get("recommended_interval_seconds", 3600)),
         "manual_interval_seconds": int(payload["manual_interval_seconds"]) if payload.get("manual_interval_seconds") else None,
@@ -2035,6 +2333,11 @@ async def add_source(payload: dict[str, Any] = Body(...), username: str = Depend
             raise HTTPException(status_code=400, detail="Repo is required for github_atom")
         new_source["repo"] = repo
         new_source["branch"] = str(payload.get("branch", "main")).strip() or "main"
+    elif kind == "x_search":
+        query = str(payload.get("query", "")).strip()
+        if not query:
+            raise HTTPException(status_code=400, detail="Query is required for x_search")
+        new_source["query"] = query
     elif kind == "workspace":
         root = str(payload.get("url", "")).strip()
         if not root:
@@ -2200,11 +2503,11 @@ async def get_dashboard(request: Request, username: str = Depends(authenticate))
     artifact_rows = "".join(render_artifact_card(item) for item in artifacts) or '<div class="empty">NO_ARTIFACTS // adjust filters or wait for sync</div>'
     healthy_sources = [source for source in sources if source.get("state") != "error"]
     error_sources = [source for source in sources if source.get("state") == "error"]
-    source_rows = "".join(render_source_card(source) for source in healthy_sources) or '<div class="empty">NO_ACTIVE_SOURCES</div>'
+    source_rows = render_source_groups(healthy_sources)
     if error_sources:
-        source_errors = f'<details class="error-log"><summary>ERROR_LOG [{len(error_sources)}]</summary>{"".join(render_source_card(source) for source in error_sources)}</details>'
+        source_errors = f'<div class="source-errors" id="sourceErrors"><details class="error-log"><summary>ERROR_LOG [{len(error_sources)}]</summary>{render_source_groups(error_sources)}</details></div>'
     else:
-        source_errors = '<details class="error-log"><summary>ERROR_LOG [0]</summary></details>'
+        source_errors = '<div class="source-errors" id="sourceErrors"><details class="error-log"><summary>ERROR_LOG [0]</summary></details></div>'
     alert_rows = "".join(
         f'<div class="signal-row"><strong>{html.escape(item.get("type", "signal"))}</strong><span>{html.escape(item.get("summary", ""))}</span></div>'
         for item in alerts[:8]

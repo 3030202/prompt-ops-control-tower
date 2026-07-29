@@ -4,7 +4,8 @@
 
 ## Возможности
 
-- адаптивный сбор RSS, GitHub Atom, web pages, Telegram и локального workspace;
+- адаптивный сбор RSS, GitHub Atom, web pages, X Recent Search, Telegram и локального workspace;
+- группировка источников по типам артефактов с сохраняемыми свёртками и отдельной видимостью Sources/Errors;
 - хранение артефактов в Redis и Qdrant;
 - комбинированные фильтры и semantic search;
 - OpenAI-compatible AI provider с загрузкой списка моделей;
@@ -31,6 +32,23 @@ docker compose up -d --build
 - Qdrant: `http://localhost:6333/dashboard`
 
 Dashboard и Studio используют HTTP Basic из `DASHBOARD_USER` / `DASHBOARD_PASS`.
+
+## Источники и TUI
+
+Каталог включает отключённые по умолчанию пресеты PromptCentral, PromptPort, PromptPortal, Prompta, image/video prompt collections, NotebookLM workflows, user-refined system prompts и prompt distillates. Включайте нужные потоки из панели Sources; их рекомендуемый cadence уже настроен.
+
+X-источники используют официальный Recent Search API. Добавьте `X_BEARER_TOKEN` в `.env`, затем явно включите нужные X-пресеты. Без токена они остаются выключенными и не расходуют трафик.
+
+Основные клавиши dashboard:
+
+- `s` — скрыть/показать Sources;
+- `e` — скрыть/показать Errors;
+- `g-` / `g+` в панели — свернуть/раскрыть все группы;
+- `Shift+S` — AI summary;
+- `Shift+E` — export;
+- `j` / `k`, `Space`, `/`, `Enter`, `Ctrl+K` — навигация, выбор, поиск, inspect и command palette.
+
+Состояние панелей и каждой группы сохраняется в `localStorage` браузера.
 
 ## Telegram
 
@@ -59,7 +77,7 @@ Live отправляет короткий flash. Длинные материа�
 
 ```bash
 python -m py_compile prompt_ops_app.py publishing_studio.py
-python -m unittest discover -s tests -v
+pytest -q tests/test_publishing.py tests/test_sources.py
 docker compose config
 ```
 
