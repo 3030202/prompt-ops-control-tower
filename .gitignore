@@ -16,3 +16,4 @@ redis_data/
 qdrant_data/
 .DS_Store
 Thumbs.db
+secrets/

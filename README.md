@@ -42,6 +42,14 @@ Dashboard и Studio используют HTTP Basic из `DASHBOARD_USER` / `DAS
 
 Live отправляет короткий flash. Длинные материалы по умолчанию создаются в review; `approval_mode=auto` включается явно.
 
+## Публикация через Cloudflare Tunnel
+
+1. Создайте named tunnel и направьте public hostname на `http://osint-radar:8000`.
+2. Сохраните tunnel token в `secrets/cloudflare_tunnel_token` без завершающих пробелов.
+3. Запустите `docker compose up -d cloudflared`.
+
+Папка `secrets/` исключена из Git и Docker build context. Основной dashboard остаётся под HTTP Basic, а `/lite` доступен публично.
+
 ## Безопасность
 
 `.env`, sessions, logs и persistent data исключены из Git и Docker context. Публичный API возвращает только allowlisted поля опубликованных материалов. Перед публичным деплоем используйте HTTPS/reverse proxy и замените пароль dashboard.

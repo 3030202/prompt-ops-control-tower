@@ -41,6 +41,16 @@ services:
         max-size: 10m
         max-file: "3"
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: promptops_cloudflared
+    restart: unless-stopped
+    depends_on:
+      - osint-radar
+    command: tunnel --no-autoupdate run --token-file /run/secrets/cloudflare_tunnel_token
+    volumes:
+      - ./secrets/cloudflare_tunnel_token:/run/secrets/cloudflare_tunnel_token:ro
+
 volumes:
   redis_data:
   qdrant_data:
