@@ -1,0 +1,2749 @@
+import asyncio
+import contextlib
+import hashlib
+import html
+import io
+import json
+import logging
+import math
+import os
+import re
+import secrets
+import sys
+import uuid
+import zipfile
+from collections import defaultdict
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+import feedparser
+import redis.asyncio as aioredis
+import uvicorn
+from dotenv import load_dotenv
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from httpx import AsyncClient
+from qdrant_client import QdrantClient, models as qmodels
+from telethon import TelegramClient, events
+from publishing_studio import (
+    configure as configure_publishing,
+    evaluate_ingested_record,
+    scheduler_loop as publishing_scheduler_loop,
+    router as publishing_router,
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+
+load_dotenv()
+
+security = HTTPBasic()
+app = FastAPI(title="Prompt Ops Control Tower")
+app.include_router(publishing_router)
+
+ARTIFACTS_KEY = "promptops:artifacts:recent"
+ALERTS_KEY = "promptops:alerts:recent"
+SOURCE_CATALOG_KEY = "promptops:sources:catalog"
+SOURCE_DELETED_KEY = "promptops:sources:deleted"
+AI_PROVIDER_KEY = "promptops:ai:provider"
+AI_USAGE_PREFIX = "promptops:ai:usage"
+SEEN_PREFIX = "promptops:seen"
+LAST_SYNC_KEY = "promptops:last_sync_at"
+QDRANT_COLLECTION = "promptops_artifacts"
+MAX_RECENT_ARTIFACTS = 500
+MAX_ALERTS = 250
+VECTOR_DIM = 128
+DATE_FMT = "%Y-%m-%dT%H:%M:%S%z"
+
+SOURCE_EXTENSIONS = {".py", ".md", ".txt", ".yml", ".yaml", ".json", ".toml", ".env"}
+EXCLUDE_DIRS = {".git", "__pycache__", "sessions", "node_modules", ".venv", ".mypy_cache"}
+MAX_FILE_BYTES = 80_000
+MAX_SNIPPET_CHARS = 1_400
+MAX_PROMPT_ITEMS = 120
+DUPE_TTL_SECONDS = 60 * 60 * 24 * 14
+GALLERY_CATEGORIES = {"Prompt", "Pipeline", "Instruction", "Skill", "Agent", "Rule"}
+
+DEFAULT_SOURCE_BLUEPRINTS = [
+    {
+        "id": "cursor_latest",
+        "name": "Cursor Hot",
+        "kind": "rss",
+        "url": "https://forum.cursor.com/latest.rss",
+        "enabled": True,
+        "recommended_interval_seconds": 1800,
+        "cadence_reason": "Forum с высокой частотой новых сообщений.",
+    },
+    {
+        "id": "cursor_announcements",
+        "name": "Cursor Announcements",
+        "kind": "rss",
+        "url": "https://forum.cursor.com/c/announcements/11.rss",
+        "enabled": True,
+        "recommended_interval_seconds": 3600,
+        "cadence_reason": "Официальные объявления меняются реже, чем общий поток.",
+    },
+    {
+        "id": "habr_articles",
+        "name": "Habr Articles",
+        "kind": "rss",
+        "url": "https://habr.com/ru/rss/articles/?fl=ru",
+        "enabled": True,
+        "recommended_interval_seconds": 3600,
+        "cadence_reason": "Habr публикует стабильную новостную ленту по AI и tooling.",
+    },
+    {
+        "id": "agents_md_commits",
+        "name": "agents.md commits",
+        "kind": "github_atom",
+        "repo": "agentsmd/agents.md",
+        "branch": "main",
+        "enabled": True,
+        "recommended_interval_seconds": 7200,
+        "cadence_reason": "GitHub commit feed не требует частого опроса.",
+    },
+    {
+        "id": "agent_rules_books_commits",
+        "name": "agent-rules-books commits",
+        "kind": "github_atom",
+        "repo": "ciembor/agent-rules-books",
+        "branch": "main",
+        "enabled": True,
+        "recommended_interval_seconds": 7200,
+        "cadence_reason": "GitHub commit feed лучше собирать в более мягком ритме.",
+    },
+    {
+        "id": "prompts_chat_commits",
+        "name": "awesome-chatgpt-prompts commits",
+        "kind": "github_atom",
+        "repo": "f/prompts.chat",
+        "branch": "main",
+        "enabled": True,
+        "recommended_interval_seconds": 7200,
+        "cadence_reason": "Репозиторий с промптами обновляется не каждую минуту.",
+    },
+    {
+        "id": "promptengineering_reddit",
+        "name": "PromptEngineering Reddit",
+        "kind": "rss",
+        "url": "https://old.reddit.com/r/PromptEngineering/.rss",
+        "enabled": False,
+        "recommended_interval_seconds": 14400,
+        "cadence_reason": "Reddit часто режет RSS и требует редкого опроса.",
+    },
+    {
+        "id": "chatgptpromptgenius_reddit",
+        "name": "ChatGPTPromptGenius Reddit",
+        "kind": "rss",
+        "url": "https://old.reddit.com/r/ChatGPTPromptGenius/.rss",
+        "enabled": False,
+        "recommended_interval_seconds": 14400,
+        "cadence_reason": "Rate limit на Reddit делает частый poll бессмысленным.",
+    },
+    {
+        "id": "habr_ai",
+        "name": "Habr: искусственный интеллект",
+        "kind": "rss",
+        "url": "https://habr.com/ru/rss/hubs/artificial_intelligence/articles/?fl=ru",
+        "enabled": False,
+        "recommended_interval_seconds": 7200,
+        "cadence_reason": "Тематический хаб обновляется реже общей ленты; двух часов достаточно.",
+        "preset_group": "RU / Editorial",
+    },
+    {
+        "id": "awesome_prompts_ai_boost",
+        "name": "ai-boost / awesome-prompts",
+        "kind": "github_atom",
+        "repo": "ai-boost/awesome-prompts",
+        "branch": "main",
+        "enabled": False,
+        "recommended_interval_seconds": 14400,
+        "cadence_reason": "Курируемый репозиторий: четырёхчасовой poll ловит изменения без лишних запросов.",
+        "preset_group": "Prompts",
+    },
+    {
+        "id": "awesome_claude_prompts",
+        "name": "awesome-claude-prompts",
+        "kind": "github_atom",
+        "repo": "langgptai/awesome-claude-prompts",
+        "branch": "main",
+        "enabled": False,
+        "recommended_interval_seconds": 14400,
+        "cadence_reason": "Claude-промпты обновляются пакетами, поэтому частый опрос не нужен.",
+        "preset_group": "Prompts",
+    },
+    {
+        "id": "awesome_agent_conventions",
+        "name": "awesome-agent-conventions",
+        "kind": "github_atom",
+        "repo": "ItamarZand88/awesome-agent-conventions",
+        "branch": "main",
+        "enabled": False,
+        "recommended_interval_seconds": 21600,
+        "cadence_reason": "Курируемый индекс соглашений меняется редко; шесть часов экономят трафик.",
+        "preset_group": "Agent rules",
+    },
+    {
+        "id": "official_mcp_servers",
+        "name": "Official MCP servers",
+        "kind": "github_atom",
+        "repo": "modelcontextprotocol/servers",
+        "branch": "main",
+        "enabled": False,
+        "recommended_interval_seconds": 7200,
+        "cadence_reason": "Официальный MCP-репозиторий активен, но двухчасового окна достаточно.",
+        "preset_group": "MCP",
+    },
+    {
+        "id": "awesome_mcp_servers",
+        "name": "awesome-mcp-servers",
+        "kind": "github_atom",
+        "repo": "punkpeye/awesome-mcp-servers",
+        "branch": "main",
+        "enabled": False,
+        "recommended_interval_seconds": 10800,
+        "cadence_reason": "Каталог обновляется регулярно; три часа дают хороший баланс свежести.",
+        "preset_group": "MCP",
+    },
+    {
+        "id": "github_mcp_server",
+        "name": "GitHub MCP Server",
+        "kind": "github_atom",
+        "repo": "github/github-mcp-server",
+        "branch": "main",
+        "enabled": False,
+        "recommended_interval_seconds": 7200,
+        "cadence_reason": "Активный production-репозиторий, рекомендуемый cadence — два часа.",
+        "preset_group": "MCP",
+    },
+    {
+        "id": "jailbreak_llms_research",
+        "name": "JailbreakLLMs research",
+        "kind": "github_atom",
+        "repo": "TrustAIRLab/JailbreakLLMs",
+        "branch": "main",
+        "enabled": False,
+        "recommended_interval_seconds": 21600,
+        "cadence_reason": "Research dataset меняется редко; шестичасовой poll безопаснее и дешевле.",
+        "preset_group": "Red team",
+    },
+    {
+        "id": "mcpbook_ru",
+        "name": "MCPbook RU",
+        "kind": "web_page",
+        "url": "https://mcpbook.ru/",
+        "enabled": False,
+        "recommended_interval_seconds": 43200,
+        "cadence_reason": "Каталог без RSS: компактный snapshot страницы дважды в сутки.",
+        "preset_group": "RU / MCP",
+    },
+    {
+        "id": "mcpdb_ru",
+        "name": "MCP Market RU",
+        "kind": "web_page",
+        "url": "https://mcpdb.ru/",
+        "enabled": False,
+        "recommended_interval_seconds": 43200,
+        "cadence_reason": "Каталог без feed: двенадцатичасовой snapshot не создаёт лишнюю нагрузку.",
+        "preset_group": "RU / MCP",
+    },
+    {
+        "id": "mcp_catalog_ru",
+        "name": "MCP Catalog RU",
+        "kind": "web_page",
+        "url": "https://mcp-catalog.ru/",
+        "enabled": False,
+        "recommended_interval_seconds": 43200,
+        "cadence_reason": "Структурный каталог достаточно проверять дважды в сутки.",
+        "preset_group": "RU / MCP",
+    },
+    {
+        "id": "agents_md_site",
+        "name": "agents.md specification",
+        "kind": "web_page",
+        "url": "https://agents.md/",
+        "enabled": False,
+        "recommended_interval_seconds": 86400,
+        "cadence_reason": "Спецификация меняется редко; одного snapshot в сутки достаточно.",
+        "preset_group": "Agent rules",
+    },
+]
+
+
+@dataclass(frozen=True)
+class Config:
+    dashboard_user: str
+    dashboard_pass: str
+    redis_host: str
+    redis_port: int
+    poll_tick_seconds: int
+    scan_roots: list[str]
+    telegram_bot_token: str
+    telegram_chat_id: str
+    telegram_api_id: int | None
+    telegram_api_hash: str | None
+    target_channels: list[str]
+    provider_name: str
+    provider_kind: str
+    provider_base_url: str
+    provider_api_key: str
+    provider_model: str
+    monthly_token_limit: int
+    monthly_budget_usd: float
+    input_price_per_1m: float
+    output_price_per_1m: float
+    qdrant_url: str
+    qdrant_api_key: str
+    qdrant_collection: str = QDRANT_COLLECTION
+
+    @property
+    def has_telegram(self) -> bool:
+        return bool(
+            self.telegram_bot_token
+            and self.telegram_bot_token != "your-bot-token-here"
+            and self.telegram_chat_id
+            and self.telegram_chat_id != "-1001234567890"
+        )
+
+    @property
+    def has_telethon(self) -> bool:
+        if not self.telegram_api_id or not self.telegram_api_hash:
+            return False
+        if self.telegram_api_id == 123456:
+            return False
+        if self.telegram_api_hash == "your_telethon_api_hash":
+            return False
+        return True
+
+    @property
+    def has_ai_provider(self) -> bool:
+        return bool(self.provider_base_url and self.provider_api_key)
+
+
+def load_config() -> Config:
+    perplexity_api_key = os.getenv("PERPLEXITY_API_KEY", "").strip()
+    if perplexity_api_key in {"pplx-your-key-here", "your-key-here"}:
+        perplexity_api_key = ""
+    ai_base_url = os.getenv("AI_PROVIDER_BASE_URL", "").strip()
+    ai_api_key = os.getenv("AI_PROVIDER_API_KEY", "").strip()
+    ai_name = os.getenv("AI_PROVIDER_NAME", "").strip()
+    ai_kind = os.getenv("AI_PROVIDER_KIND", "openai_compatible").strip()
+    ai_model = os.getenv("AI_PROVIDER_MODEL", "").strip()
+
+    if not ai_base_url and perplexity_api_key:
+        ai_base_url = "https://api.perplexity.ai"
+        ai_api_key = perplexity_api_key
+        ai_name = ai_name or "Perplexity"
+        ai_kind = "openai_compatible"
+        ai_model = ai_model or "xai/grok-4.5"
+
+    scan_roots = [root.strip() for root in os.getenv("PROMPT_OPS_SCAN_ROOTS", "/app,/app/.codex,/app/.agents").split(",") if root.strip()]
+    target_channels = [c.strip() for c in os.getenv("TARGET_TELEGRAM_CHANNELS", "").split(",") if c.strip()]
+    return Config(
+        dashboard_user=os.getenv("DASHBOARD_USER", "admin"),
+        dashboard_pass=os.getenv("DASHBOARD_PASS", "admin"),
+        redis_host=os.getenv("REDIS_HOST", "redis"),
+        redis_port=int(os.getenv("REDIS_PORT", 6379)),
+        poll_tick_seconds=max(15, int(os.getenv("POLL_TICK_SECONDS", 45))),
+        scan_roots=scan_roots,
+        telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+        telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
+        telegram_api_id=int(os.getenv("TELEGRAM_API_ID", "0") or 0) or None,
+        telegram_api_hash=os.getenv("TELEGRAM_API_HASH", "").strip() or None,
+        target_channels=target_channels,
+        provider_name=ai_name or "OpenAI-compatible",
+        provider_kind=ai_kind,
+        provider_base_url=ai_base_url,
+        provider_api_key=ai_api_key,
+        provider_model=ai_model or "gpt-4o-mini",
+        monthly_token_limit=int(os.getenv("AI_MONTHLY_TOKEN_LIMIT", 500000)),
+        monthly_budget_usd=float(os.getenv("AI_MONTHLY_BUDGET_USD", 25.0)),
+        input_price_per_1m=float(os.getenv("AI_INPUT_PRICE_PER_1M", 2.0)),
+        output_price_per_1m=float(os.getenv("AI_OUTPUT_PRICE_PER_1M", 8.0)),
+        qdrant_url=os.getenv("QDRANT_URL", "http://qdrant:6333"),
+        qdrant_api_key=os.getenv("QDRANT_API_KEY", "").strip(),
+    )
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso_now() -> str:
+    return now_utc().strftime(DATE_FMT)
+
+
+def parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        cleaned = value.strip()
+        if cleaned.endswith("Z"):
+            cleaned = cleaned[:-1] + "+0000"
+        if len(cleaned) > 5 and cleaned[-3] == ":":
+            cleaned = cleaned[:-3] + cleaned[-2:]
+        return datetime.strptime(cleaned, DATE_FMT)
+    except Exception:
+        return None
+
+
+def parse_iso_ts(value: str | None) -> float:
+    parsed = parse_dt(value)
+    return parsed.timestamp() if parsed else now_utc().timestamp()
+
+
+def format_relative(dt_value: str | None) -> str:
+    parsed = parse_dt(dt_value)
+    if not parsed:
+        return "-"
+    delta = parsed - now_utc()
+    minutes = int(delta.total_seconds() / 60)
+    if abs(minutes) < 1:
+        return "now"
+    if minutes > 0:
+        if minutes < 60:
+            return f"in {minutes}m"
+        return f"in {minutes // 60}h"
+    minutes = abs(minutes)
+    if minutes < 60:
+        return f"{minutes}m ago"
+    return f"{minutes // 60}h ago"
+
+
+def normalize_ws(text: str) -> str:
+    return " ".join(text.split())
+
+
+def tokenize(text: str) -> list[str]:
+    return re.findall(r"[A-Za-zА-Яа-я0-9_@#./:-]+", text.lower())
+
+
+def estimate_tokens(text: str) -> int:
+    clean = normalize_ws(text)
+    if not clean:
+        return 0
+    return max(1, math.ceil(len(clean) / 4))
+
+
+def clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def slugify(text: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.lower()).strip("-")
+    return slug or secrets.token_hex(6)
+
+
+def stable_id(*parts: str) -> str:
+    digest = hashlib.sha256("||".join(parts).encode("utf-8")).hexdigest()
+    return digest[:24]
+
+
+def clean_json_response(raw_content: str) -> str:
+    content = raw_content.strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[-1]
+    if content.endswith("```"):
+        content = content.rsplit("\n", 1)[0]
+    return content.strip()
+
+
+def safe_json_loads(raw: str, fallback: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return json.loads(clean_json_response(raw))
+    except Exception:
+        return fallback
+
+
+def dedupe_text(*parts: str) -> str:
+    return hashlib.sha256("::".join(parts).encode("utf-8")).hexdigest()
+
+
+def classify_artifact(path: str, text: str) -> tuple[str, int]:
+    lowered_path = path.lower()
+    lowered = text.lower()
+    if "skill" in lowered_path or "skill.md" in lowered_path or "skill" in lowered:
+        return "Skill", 88
+    if any(token in lowered for token in ["system prompt", "response_format", "messages", "temperature"]):
+        return "Prompt", 84
+    if any(token in lowered_path for token in ["dockerfile", "compose", "workflow", ".github/"]) or any(
+        token in lowered for token in ["build", "deploy", "pipeline", "asyncio.create_task", "uvicorn"]
+    ):
+        return "Pipeline", 81
+    if any(token in lowered for token in ["instruction", "must", "should", "usage", "example", "env"]):
+        return "Instruction", 74
+    if any(token in lowered for token in ["agent", "worker", "daemon", "telethon", "bot"]):
+        return "Agent", 76
+    if any(token in lowered for token in ["rule", "guardrail", "validate", "auth", "check", "sanitize"]):
+        return "Rule", 79
+    return "Noise", 10
+
+
+def derive_tags(path: str, text: str, category: str) -> list[str]:
+    lowered = f"{path}\n{text}".lower()
+    tags: list[str] = [category.lower()]
+    keyword_map = [
+        ("prompt", "prompt"),
+        ("system prompt", "system"),
+        ("template", "template"),
+        ("workflow", "workflow"),
+        ("pipeline", "pipeline"),
+        ("instruction", "instruction"),
+        ("skill", "skill"),
+        ("agent", "agent"),
+        ("rule", "rule"),
+        ("guardrail", "guardrail"),
+        ("check", "check"),
+        ("validate", "validate"),
+        ("docker", "docker"),
+        ("telethon", "telethon"),
+        ("fastapi", "fastapi"),
+        ("qdrant", "vector"),
+    ]
+    for needle, tag in keyword_map:
+        if needle in lowered:
+            tags.append(tag)
+    suffix = Path(path).suffix.lower().lstrip(".")
+    if suffix:
+        tags.append(suffix)
+    if Path(path).name.lower() == "dockerfile":
+        tags.append("dockerfile")
+    if Path(path).name.lower() == "docker-compose.yml":
+        tags.append("compose")
+    return list(dict.fromkeys(tags))[:10]
+
+
+def derive_complexity(category: str, text: str) -> int:
+    base = {"Prompt": 65, "Pipeline": 70, "Instruction": 52, "Skill": 76, "Agent": 68, "Rule": 58}.get(category, 18)
+    base += min(25, len(text) // 120)
+    return int(clamp(base, 1, 100))
+
+
+def extract_entities(path: str, text: str) -> list[str]:
+    entities = [path]
+    for token in tokenize(text):
+        clean = token.strip(",.;:()[]{}<>\"'`")
+        if clean.startswith(("http://", "https://", "./", "/")):
+            entities.append(clean)
+        elif clean.isupper() and 2 <= len(clean) <= 24:
+            entities.append(clean)
+        elif clean.endswith((".py", ".yml", ".yaml", ".md", ".json", ".toml", ".xml", ".rss")):
+            entities.append(clean)
+    return list(dict.fromkeys(entities))[:12]
+
+
+def make_title(path: str, text: str, category: str) -> str:
+    for line in text.splitlines():
+        clean = line.strip().lstrip("#-*> ")
+        if clean:
+            return clean[:96]
+    name = Path(path).name if path else "workspace"
+    return f"{category}: {name}"
+
+
+def make_summary_from_text(text: str) -> str:
+    clean = normalize_ws(text)
+    return clean[:220] + ("..." if len(clean) > 220 else "")
+
+
+def heuristic_analysis(raw_text: str, path: str = "") -> dict[str, Any]:
+    category, score = classify_artifact(path, raw_text)
+    if category == "Noise":
+        lowered = raw_text.lower()
+        if any(token in lowered for token in ["prompt", "instruction", "skill", "agent", "pipeline", "rule"]):
+            score = 35
+            category = "Instruction"
+    tags = derive_tags(path or "workspace", raw_text, category)
+    return {
+        "anomaly_score": score,
+        "category": category,
+        "summary": "Автоматическая эвристическая оценка без внешней модели.",
+        "entities": extract_entities(path or "workspace", raw_text),
+        "tags": tags,
+        "complexity": derive_complexity(category, raw_text),
+        "killer_feature": "Локальная обработка без расходов на модель.",
+        "should_disappear": "Дубли, лишний шум и boilerplate.",
+    }
+
+
+def render_prompt_merger(records: list[dict[str, Any]]) -> str:
+    parts = []
+    for idx, record in enumerate(records, start=1):
+        parts.append(
+            f"[{idx}] {record.get('title', 'Untitled')}\n"
+            f"Type: {record.get('type', 'Unknown')}\n"
+            f"Source: {record.get('source_name', '')}\n"
+            f"Summary: {record.get('summary', '')}\n"
+            f"Tags: {', '.join(record.get('tags', []))}\n"
+            f"Content:\n{record.get('raw', record.get('snippet', ''))}"
+        )
+    return "\n\n---\n\n".join(parts)
+
+
+def embed_text(text: str) -> list[float]:
+    vector = [0.0] * VECTOR_DIM
+    tokens = tokenize(text)
+    if not tokens:
+        return vector
+    for token in tokens:
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        idx = int.from_bytes(digest[:2], "big") % VECTOR_DIM
+        sign = 1.0 if digest[2] % 2 == 0 else -1.0
+        weight = 1.0 + min(len(token), 12) / 12.0
+        vector[idx] += sign * weight
+    norm = math.sqrt(sum(v * v for v in vector))
+    if not norm:
+        return vector
+    return [v / norm for v in vector]
+
+
+def make_artifact_id(source_id: str, path: str, text: str) -> str:
+    return stable_id(source_id, path, text[:2000])
+
+
+def vector_point_id(artifact_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"promptops:{artifact_id}"))
+
+
+def default_source_catalog(cfg: Config) -> list[dict[str, Any]]:
+    catalog: list[dict[str, Any]] = []
+    for blueprint in DEFAULT_SOURCE_BLUEPRINTS:
+        item = dict(blueprint)
+        item.setdefault("manual_interval_seconds", None)
+        item.setdefault("empty_streak", 0)
+        item.setdefault("error_streak", 0)
+        item.setdefault("paused", False)
+        item.setdefault("last_attempt_at", None)
+        item.setdefault("last_success_at", None)
+        item.setdefault("next_refresh_at", None)
+        item.setdefault("state", "idle")
+        item.setdefault("detail", "waiting")
+        item.setdefault("updated_at", iso_now())
+        catalog.append(item)
+    for root in cfg.scan_roots:
+        catalog.append(
+            {
+                "id": f"workspace_{slugify(root)}",
+                "name": f"Workspace: {root}",
+                "kind": "workspace",
+                "root": root,
+                "enabled": True,
+                "recommended_interval_seconds": 900,
+                "cadence_reason": "Локальный workspace меняется быстро и требует частого поллинга.",
+                "manual_interval_seconds": None,
+                "empty_streak": 0,
+                "error_streak": 0,
+                "paused": False,
+                "last_attempt_at": None,
+                "last_success_at": None,
+                "next_refresh_at": None,
+                "state": "idle",
+                "detail": "waiting",
+                "updated_at": iso_now(),
+            }
+        )
+    return catalog
+
+
+def merge_catalog(defaults: list[dict[str, Any]], current: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id = {item["id"]: item for item in current}
+    merged = []
+    for item in defaults:
+        merged.append({**item, **by_id.get(item["id"], {})})
+    known = {item["id"] for item in defaults}
+    for item in current:
+        if item["id"] not in known:
+            merged.append(item)
+    return merged
+
+
+def default_provider_state(cfg: Config) -> dict[str, Any]:
+    return {
+        "name": cfg.provider_name,
+        "kind": cfg.provider_kind,
+        "base_url": cfg.provider_base_url,
+        "api_key": cfg.provider_api_key,
+        "model": cfg.provider_model,
+        "monthly_token_limit": cfg.monthly_token_limit,
+        "monthly_budget_usd": cfg.monthly_budget_usd,
+        "input_price_per_1m": cfg.input_price_per_1m,
+        "output_price_per_1m": cfg.output_price_per_1m,
+        "updated_at": iso_now(),
+        "loaded_models": [],
+    }
+
+
+def api_root(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if "api.perplexity.ai" in base:
+        return base.removesuffix("/v1")
+    return base if base.endswith("/v1") else f"{base}/v1"
+
+
+def provider_is_configured() -> bool:
+    provider = getattr(app.state, "provider_state", {})
+    return bool(str(provider.get("base_url", "")).strip() and str(provider.get("api_key", "")).strip())
+
+
+async def redis_get_json(redis_client: aioredis.Redis, key: str, default: Any) -> Any:
+    raw = await redis_client.get(key)
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except Exception:
+        return default
+
+
+async def redis_set_json(redis_client: aioredis.Redis, key: str, value: Any) -> None:
+    await redis_client.set(key, json.dumps(value, ensure_ascii=False))
+
+
+def authenticate(credentials: HTTPBasicCredentials = Depends(security)) -> str:
+    cfg: Config = app.state.config
+    ok_user = secrets.compare_digest(credentials.username, cfg.dashboard_user)
+    ok_pass = secrets.compare_digest(credentials.password, cfg.dashboard_pass)
+    if not (ok_user and ok_pass):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный логин или пароль",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
+
+async def ensure_qdrant_collection() -> None:
+    cfg: Config = app.state.config
+    client: QdrantClient | None = getattr(app.state, "qdrant", None)
+    if not client:
+        app.state.vector_ready = False
+        app.state.vector_status = "disabled"
+        return
+
+    def _prepare() -> None:
+        exists = client.collection_exists(cfg.qdrant_collection)
+        if not exists:
+            client.create_collection(
+                collection_name=cfg.qdrant_collection,
+                vectors_config=qmodels.VectorParams(size=VECTOR_DIM, distance=qmodels.Distance.COSINE),
+            )
+
+    await asyncio.to_thread(_prepare)
+    app.state.vector_ready = True
+    app.state.vector_status = "ready"
+
+
+async def qdrant_upsert(record: dict[str, Any]) -> None:
+    client: QdrantClient | None = getattr(app.state, "qdrant", None)
+    if not client or not getattr(app.state, "vector_ready", False):
+        return
+    cfg: Config = app.state.config
+    payload = dict(record)
+    vector = embed_text(
+        " ".join(
+            [
+                record.get("title", ""),
+                record.get("summary", ""),
+                record.get("raw", ""),
+                " ".join(record.get("tags", [])),
+                record.get("source_name", ""),
+                record.get("type", ""),
+            ]
+        )
+    )
+
+    def _upsert() -> None:
+        client.upsert(
+            collection_name=cfg.qdrant_collection,
+            points=[qmodels.PointStruct(id=vector_point_id(record["id"]), vector=vector, payload=payload)],
+        )
+
+    await asyncio.to_thread(_upsert)
+
+
+async def qdrant_retrieve(ids: list[str]) -> list[dict[str, Any]]:
+    client: QdrantClient | None = getattr(app.state, "qdrant", None)
+    if not client or not getattr(app.state, "vector_ready", False) or not ids:
+        return []
+    cfg: Config = app.state.config
+
+    def _retrieve() -> list[dict[str, Any]]:
+        records = client.retrieve(
+            collection_name=cfg.qdrant_collection,
+            ids=[vector_point_id(item_id) for item_id in ids],
+            with_payload=True,
+            with_vectors=False,
+        )
+        result: list[dict[str, Any]] = []
+        for record in records:
+            payload = dict(record.payload or {})
+            payload["id"] = str(record.id)
+            result.append(payload)
+        return result
+
+    return await asyncio.to_thread(_retrieve)
+
+
+def build_filter_conditions(params: dict[str, Any]) -> qmodels.Filter | None:
+    must: list[Any] = []
+    if params.get("types"):
+        must.append(
+            qmodels.FieldCondition(
+                key="type",
+                match=qmodels.MatchAny(any=[item for item in params["types"] if item]),
+            )
+        )
+    if params.get("sources"):
+        must.append(
+            qmodels.FieldCondition(
+                key="source_name",
+                match=qmodels.MatchAny(any=[item for item in params["sources"] if item]),
+            )
+        )
+    if params.get("tags"):
+        must.append(
+            qmodels.FieldCondition(
+                key="tags",
+                match=qmodels.MatchAny(any=[item for item in params["tags"] if item]),
+            )
+        )
+    if params.get("min_rating") is not None or params.get("max_rating") is not None:
+        must.append(
+            qmodels.FieldCondition(
+                key="rating",
+                range=qmodels.Range(gte=params.get("min_rating"), lte=params.get("max_rating")),
+            )
+        )
+    if params.get("min_complexity") is not None or params.get("max_complexity") is not None:
+        must.append(
+            qmodels.FieldCondition(
+                key="complexity",
+                range=qmodels.Range(gte=params.get("min_complexity"), lte=params.get("max_complexity")),
+            )
+        )
+    if params.get("date_from_ts") is not None or params.get("date_to_ts") is not None:
+        must.append(
+            qmodels.FieldCondition(
+                key="published_ts",
+                range=qmodels.Range(gte=params.get("date_from_ts"), lte=params.get("date_to_ts")),
+            )
+        )
+    if not must:
+        return None
+    return qmodels.Filter(must=must)
+
+
+async def qdrant_search(
+    query: str | None,
+    filters: qmodels.Filter | None,
+    limit: int = 120,
+) -> list[dict[str, Any]]:
+    client: QdrantClient | None = getattr(app.state, "qdrant", None)
+    if not client or not getattr(app.state, "vector_ready", False):
+        return []
+    cfg: Config = app.state.config
+
+    def _run_search() -> list[dict[str, Any]]:
+        if query:
+            vector = embed_text(query)
+            records = client.search(
+                collection_name=cfg.qdrant_collection,
+                query_vector=vector,
+                query_filter=filters,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+        else:
+            records, _ = client.scroll(
+                collection_name=cfg.qdrant_collection,
+                scroll_filter=filters,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+        result: list[dict[str, Any]] = []
+        for record in records:
+            payload = dict(record.payload or {})
+            payload["id"] = str(record.id)
+            payload["search_score"] = getattr(record, "score", None)
+            result.append(payload)
+        result.sort(key=lambda item: item.get("published_ts", 0), reverse=True)
+        return result
+
+    return await asyncio.to_thread(_run_search)
+
+
+async def load_source_catalog() -> list[dict[str, Any]]:
+    cfg: Config = app.state.config
+    redis_client: aioredis.Redis = app.state.redis
+    current = await redis_get_json(redis_client, SOURCE_CATALOG_KEY, [])
+    if not current:
+        catalog = default_source_catalog(cfg)
+        await redis_set_json(redis_client, SOURCE_CATALOG_KEY, catalog)
+        return catalog
+    deleted = await redis_client.smembers(SOURCE_DELETED_KEY)
+    catalog = merge_catalog(default_source_catalog(cfg), current)
+    return [item for item in catalog if item.get("id") not in deleted]
+
+
+async def save_source_catalog(catalog: list[dict[str, Any]]) -> None:
+    redis_client: aioredis.Redis = app.state.redis
+    await redis_set_json(redis_client, SOURCE_CATALOG_KEY, catalog)
+    app.state.source_catalog = catalog
+
+
+async def load_provider_state() -> dict[str, Any]:
+    cfg: Config = app.state.config
+    redis_client: aioredis.Redis = app.state.redis
+    state = await redis_get_json(redis_client, AI_PROVIDER_KEY, default_provider_state(cfg))
+    state.setdefault("loaded_models", [])
+    state.setdefault("name", cfg.provider_name)
+    state.setdefault("kind", cfg.provider_kind)
+    state.setdefault("base_url", cfg.provider_base_url)
+    state.setdefault("api_key", cfg.provider_api_key)
+    state.setdefault("model", cfg.provider_model)
+    state.setdefault("monthly_token_limit", cfg.monthly_token_limit)
+    state.setdefault("monthly_budget_usd", cfg.monthly_budget_usd)
+    state.setdefault("input_price_per_1m", cfg.input_price_per_1m)
+    state.setdefault("output_price_per_1m", cfg.output_price_per_1m)
+    return state
+
+
+async def save_provider_state(state: dict[str, Any]) -> None:
+    redis_client: aioredis.Redis = app.state.redis
+    state["updated_at"] = iso_now()
+    await redis_set_json(redis_client, AI_PROVIDER_KEY, state)
+    app.state.provider_state = state
+
+
+async def record_usage(
+    provider_name: str,
+    model_name: str,
+    function_name: str,
+    usage: dict[str, int],
+    cost_usd: float,
+) -> None:
+    redis_client: aioredis.Redis = app.state.redis
+    session_key = f"{AI_USAGE_PREFIX}:session:{app.state.session_id}"
+    period_key = f"{AI_USAGE_PREFIX}:period:{now_utc().strftime('%Y-%m')}"
+    model_key = f"{AI_USAGE_PREFIX}:model:{slugify(model_name)}"
+    provider_key = f"{AI_USAGE_PREFIX}:provider:{slugify(provider_name)}"
+    function_key = f"{AI_USAGE_PREFIX}:function:{slugify(function_name)}"
+    total_key = f"{AI_USAGE_PREFIX}:total"
+
+    async def _apply(key: str) -> None:
+        await redis_client.hincrby(key, "prompt_tokens", int(usage.get("prompt_tokens", 0)))
+        await redis_client.hincrby(key, "completion_tokens", int(usage.get("completion_tokens", 0)))
+        await redis_client.hincrby(key, "total_tokens", int(usage.get("total_tokens", 0)))
+        await redis_client.hincrby(key, "calls", 1)
+        await redis_client.hincrbyfloat(key, "cost_usd", float(cost_usd))
+
+    await asyncio.gather(
+        _apply(total_key),
+        _apply(session_key),
+        _apply(period_key),
+        _apply(model_key),
+        _apply(provider_key),
+        _apply(function_key),
+    )
+
+
+def estimated_cost(usage: dict[str, int]) -> float:
+    provider = app.state.provider_state
+    input_tokens = int(usage.get("prompt_tokens", 0))
+    completion_tokens = int(usage.get("completion_tokens", 0))
+    input_price = float(provider.get("input_price_per_1m", app.state.config.input_price_per_1m))
+    output_price = float(provider.get("output_price_per_1m", app.state.config.output_price_per_1m))
+    return (input_tokens / 1_000_000) * input_price + (completion_tokens / 1_000_000) * output_price
+
+
+def normalize_usage(raw_usage: dict[str, Any] | None, prompt_text: str = "", completion_text: str = "") -> dict[str, int]:
+    if raw_usage:
+        prompt_tokens = int(raw_usage.get("prompt_tokens") or raw_usage.get("input_tokens") or 0)
+        completion_tokens = int(raw_usage.get("completion_tokens") or raw_usage.get("output_tokens") or 0)
+        total_tokens = int(raw_usage.get("total_tokens") or (prompt_tokens + completion_tokens) or 0)
+        if not total_tokens:
+            total_tokens = prompt_tokens + completion_tokens
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+    prompt_tokens = estimate_tokens(prompt_text)
+    completion_tokens = estimate_tokens(completion_text)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+async def get_telemetry_snapshot() -> dict[str, Any]:
+    cfg: Config = app.state.config
+    redis_client: aioredis.Redis = app.state.redis
+    total = await redis_client.hgetall(f"{AI_USAGE_PREFIX}:total")
+    session = await redis_client.hgetall(f"{AI_USAGE_PREFIX}:session:{app.state.session_id}")
+    period = await redis_client.hgetall(f"{AI_USAGE_PREFIX}:period:{now_utc().strftime('%Y-%m')}")
+    provider = app.state.provider_state
+    tokens = int(total.get("total_tokens", 0) or 0)
+    total_cost = float(total.get("cost_usd", 0.0) or 0.0)
+    token_limit = int(provider.get("monthly_token_limit", cfg.monthly_token_limit))
+    budget_usd = float(provider.get("monthly_budget_usd", cfg.monthly_budget_usd))
+    remaining_tokens = max(0, token_limit - tokens)
+    remaining_money = max(0.0, budget_usd - total_cost)
+
+    indexed_count = await count_artifacts()
+    last_sync = await redis_client.get(LAST_SYNC_KEY)
+    return {
+        "provider": provider.get("name", cfg.provider_name),
+        "provider_kind": provider.get("kind", cfg.provider_kind),
+        "model": provider.get("model", cfg.provider_model),
+        "tokens_total": tokens,
+        "cost_total": round(total_cost, 4),
+        "remaining_tokens": remaining_tokens,
+        "remaining_usd": round(remaining_money, 4),
+        "session_tokens": int(session.get("total_tokens", 0) or 0),
+        "period_tokens": int(period.get("total_tokens", 0) or 0),
+        "session_cost": float(session.get("cost_usd", 0.0) or 0.0),
+        "period_cost": float(period.get("cost_usd", 0.0) or 0.0),
+        "token_limit": token_limit,
+        "budget_usd": budget_usd,
+        "indexed_artifacts": indexed_count,
+        "vector_status": getattr(app.state, "vector_status", "unknown"),
+        "last_sync": last_sync or "-",
+        "current_session": app.state.session_id,
+    }
+
+
+def provider_messages(action: str, text: str, records: list[dict[str, Any]] | None = None) -> list[dict[str, str]]:
+    if action == "summary":
+        system = (
+            "Ты кратко резюмируешь артефакт в 1-2 предложениях. Верни только JSON: "
+            '{"summary":"...","killer_feature":"...","should_disappear":"...","tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."]}'
+        )
+        user = text
+    elif action == "analysis":
+        system = (
+            "Ты проводишь экспресс-анализ артефакта. Верни только JSON: "
+            '{"summary":"...","killer_feature":"...","should_disappear":"...","tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."]}'
+        )
+        user = text
+    elif action == "augment":
+        system = (
+            "Ты дополняешь артефакт практическими улучшениями. Верни только JSON: "
+            '{"summary":"...","killer_feature":"...","should_disappear":"...","augmentation":"...","tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."]}'
+        )
+        user = text
+    elif action == "prune":
+        system = (
+            "Ты определяешь, что должно исчезнуть или быть удалено. Верни только JSON: "
+            '{"summary":"...","killer_feature":"...","should_disappear":"...","anti_patterns":["..."],"tags":["..."],"category":"...","complexity":0,"anomaly_score":0,"entities":["..."]}'
+        )
+        user = text
+    else:
+        merged = render_prompt_merger(records or [])
+        system = (
+            "Ты собираешь canvas-пакет из выбранных артефактов. Верни только JSON: "
+            '{"title":"...","purpose":"...","summary":"...","merged_prompt":"...","instructions":"...","killer_feature":"...","should_disappear":"...","tags":["..."]}'
+        )
+        user = merged
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+async def fetch_provider_models() -> list[str]:
+    provider = app.state.provider_state
+    base_url = provider.get("base_url", "").strip()
+    api_key = provider.get("api_key", "").strip()
+    if not base_url or not api_key:
+        return []
+    url = f"{api_root(base_url)}/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    async with AsyncClient(timeout=20.0) as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        payload = response.json()
+    items = payload.get("data", payload if isinstance(payload, list) else [])
+    models = []
+    for item in items:
+        if isinstance(item, dict):
+            model_id = item.get("id") or item.get("name")
+            if model_id:
+                models.append(str(model_id))
+        elif isinstance(item, str):
+            models.append(item)
+    return sorted(list(dict.fromkeys(models)))
+
+
+async def call_provider(action: str, text: str, records: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], dict[str, int], str]:
+    provider = app.state.provider_state
+    base_url = provider.get("base_url", "").strip()
+    api_key = provider.get("api_key", "").strip()
+    model = provider.get("model", "").strip() or app.state.config.provider_model
+    if not base_url or not api_key:
+        raise RuntimeError("AI provider is not configured")
+    url = f"{api_root(base_url)}/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    messages = provider_messages(action, text, records)
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.15,
+        "response_format": {"type": "json_object"},
+    }
+    async with AsyncClient(timeout=40.0) as client:
+        response = await client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+    choices = data.get("choices", [])
+    content = ""
+    if choices:
+        content = choices[0].get("message", {}).get("content", "") or ""
+    usage = normalize_usage(data.get("usage"), json.dumps(messages, ensure_ascii=False), content)
+    parsed = safe_json_loads(
+        content,
+        {
+            "summary": make_summary_from_text(text),
+            "killer_feature": "Найден живой сигнал в источнике.",
+            "should_disappear": "Шум и лишние повторы.",
+            "tags": [],
+            "category": "Prompt",
+            "complexity": 50,
+            "anomaly_score": 50,
+            "entities": [],
+        },
+    )
+    return parsed, usage, content
+
+
+def build_record(item: dict[str, Any], analysis: dict[str, Any], provider_name: str, model_name: str, function_name: str) -> dict[str, Any]:
+    path = item.get("path", "")
+    raw = item.get("text", "")
+    category = str(analysis.get("category") or "Noise")
+    rating = int(clamp(float(analysis.get("anomaly_score", 0) or 0), 0, 100))
+    tags = list(dict.fromkeys((analysis.get("tags") or []) + derive_tags(path, raw, category)))[:12]
+    record = {
+        "id": make_artifact_id(item.get("source_id", item.get("source_name", "unknown")), path, raw),
+        "title": item.get("title") or make_title(path, raw, category),
+        "path": path,
+        "source_id": item.get("source_id", ""),
+        "source_name": item.get("source_name", ""),
+        "source_kind": item.get("source_kind", ""),
+        "source_url": item.get("source_url", ""),
+        "type": category,
+        "rating": rating,
+        "complexity": int(clamp(int(analysis.get("complexity", derive_complexity(category, raw))), 1, 100)),
+        "summary": analysis.get("summary") or make_summary_from_text(raw),
+        "killer_feature": analysis.get("killer_feature", ""),
+        "should_disappear": analysis.get("should_disappear", ""),
+        "augmentation": analysis.get("augmentation", ""),
+        "anti_patterns": analysis.get("anti_patterns", []),
+        "entities": analysis.get("entities", extract_entities(path, raw)),
+        "tags": tags,
+        "raw": raw[:MAX_SNIPPET_CHARS],
+        "search_blob": normalize_ws(
+            " ".join([item.get("title", ""), path, raw, " ".join(tags), category, item.get("source_name", ""), item.get("source_kind", "")])
+        ).lower(),
+        "published_at": item.get("published_at") or iso_now(),
+        "published_ts": item.get("published_ts") or now_utc().timestamp(),
+        "updated_at": iso_now(),
+        "provider_name": provider_name,
+        "model_name": model_name,
+        "function_name": function_name,
+        "session_id": app.state.session_id,
+        "origin": item.get("origin", ""),
+    }
+    return record
+
+
+async def store_artifact(record: dict[str, Any]) -> None:
+    redis_client: aioredis.Redis = app.state.redis
+    await redis_client.lpush(ARTIFACTS_KEY, json.dumps(record, ensure_ascii=False))
+    await redis_client.ltrim(ARTIFACTS_KEY, 0, MAX_RECENT_ARTIFACTS - 1)
+    if int(record.get("rating", 0)) >= 70:
+        await redis_client.lpush(ALERTS_KEY, json.dumps(record, ensure_ascii=False))
+        await redis_client.ltrim(ALERTS_KEY, 0, MAX_ALERTS - 1)
+    await redis_client.set(LAST_SYNC_KEY, iso_now())
+    try:
+        await qdrant_upsert(record)
+    except Exception as exc:
+        app.state.vector_status = "degraded"
+        logging.error("Vector upsert failed for %s: %s", record.get("id"), exc)
+
+
+async def process_item(item: dict[str, Any], function_name: str = "ingest") -> dict[str, Any] | None:
+    redis_client: aioredis.Redis = app.state.redis
+    cfg: Config = app.state.config
+    source_id = item.get("source_id", item.get("source_name", "unknown"))
+    raw = item.get("text", "")
+    path = item.get("path", "")
+    dupe_key = f"{SEEN_PREFIX}:{dedupe_text(source_id, path, raw)}"
+    was_new = await redis_client.set(dupe_key, "1", ex=DUPE_TTL_SECONDS, nx=True)
+    if not was_new:
+        return None
+
+    provider_name = app.state.provider_state.get("name", cfg.provider_name)
+    model_name = app.state.provider_state.get("model", cfg.provider_model)
+    analysis = heuristic_analysis(raw, path)
+    if provider_is_configured():
+        try:
+            parsed, usage, _ = await call_provider("analysis", raw)
+            analysis = {
+                **analysis,
+                **parsed,
+                "summary": parsed.get("summary") or analysis.get("summary"),
+            }
+            usage_normalized = normalize_usage(usage, raw, json.dumps(parsed, ensure_ascii=False))
+            cost = estimated_cost(usage_normalized)
+            await record_usage(provider_name, model_name, function_name, usage_normalized, cost)
+        except Exception as exc:
+            logging.warning("AI analysis fallback: %s", exc)
+    record = build_record(item, analysis, provider_name, model_name, function_name)
+    await store_artifact(record)
+    try:
+        await evaluate_ingested_record(record)
+    except Exception as exc:
+        logging.error("Publishing evaluation failed for %s: %s", record.get("id"), exc)
+    return record
+
+
+async def fetch_rss_items(client: AsyncClient, source: dict[str, Any]) -> list[dict[str, Any]]:
+    response = await client.get(
+        source["url"],
+        timeout=20.0,
+        follow_redirects=True,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; Prompt-Ops-Control-Tower/1.0)",
+            "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8",
+        },
+    )
+    response.raise_for_status()
+    parsed = await asyncio.to_thread(feedparser.parse, response.text)
+    items: list[dict[str, Any]] = []
+    for entry in parsed.entries[:12]:
+        title = entry.get("title") or entry.get("summary") or entry.get("description") or "Untitled"
+        summary = entry.get("summary", entry.get("description", ""))
+        link = entry.get("link", source["url"])
+        published = entry.get("published") or entry.get("updated") or iso_now()
+        items.append(
+            {
+                "text": f"Title: {title}\nSummary: {summary}\nLink: {link}",
+                "path": link,
+                "source_id": source["id"],
+                "source_name": source["name"],
+                "source_kind": source["kind"],
+                "source_url": source["url"],
+                "title": title,
+                "summary": summary,
+                "published_at": published,
+                "published_ts": parse_iso_ts(published),
+                "origin": source["kind"],
+            }
+        )
+    return items
+
+
+async def fetch_github_atom_items(client: AsyncClient, source: dict[str, Any]) -> list[dict[str, Any]]:
+    url = f"https://github.com/{source['repo']}/commits/{source['branch']}.atom"
+    response = await client.get(
+        url,
+        timeout=20.0,
+        follow_redirects=True,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; Prompt-Ops-Control-Tower/1.0)",
+            "Accept": "application/atom+xml, application/xml;q=0.9, */*;q=0.8",
+        },
+    )
+    response.raise_for_status()
+    parsed = await asyncio.to_thread(feedparser.parse, response.text)
+    items: list[dict[str, Any]] = []
+    for entry in parsed.entries[:12]:
+        title = entry.get("title") or entry.get("summary") or "Untitled"
+        summary = entry.get("summary", "")
+        link = entry.get("link", url)
+        published = entry.get("published") or entry.get("updated") or iso_now()
+        items.append(
+            {
+                "text": f"Title: {title}\nSummary: {summary}\nLink: {link}\nRepo: {source['repo']}",
+                "path": source["repo"],
+                "source_id": source["id"],
+                "source_name": source["name"],
+                "source_kind": source["kind"],
+                "source_url": url,
+                "title": title,
+                "summary": summary,
+                "published_at": published,
+                "published_ts": parse_iso_ts(published),
+                "origin": source["kind"],
+            }
+        )
+    return items
+
+
+async def fetch_web_page_items(client: AsyncClient, source: dict[str, Any]) -> list[dict[str, Any]]:
+    response = await client.get(
+        source["url"],
+        timeout=20.0,
+        follow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; Prompt-Ops-Control-Tower/1.0)"},
+    )
+    response.raise_for_status()
+    raw_html = response.text
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.IGNORECASE | re.DOTALL)
+    title = html.unescape(normalize_ws(title_match.group(1))) if title_match else source["name"]
+    cleaned = re.sub(r"<(script|style|svg)[^>]*>.*?</\1>", " ", raw_html, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = html.unescape(normalize_ws(re.sub(r"<[^>]+>", " ", cleaned)))[:MAX_SNIPPET_CHARS]
+    return [{
+        "text": f"Title: {title}\nSnapshot: {cleaned}\nLink: {source['url']}",
+        "path": source["url"],
+        "source_id": source["id"],
+        "source_name": source["name"],
+        "source_kind": source["kind"],
+        "source_url": source["url"],
+        "title": title,
+        "summary": cleaned[:220],
+        "published_at": iso_now(),
+        "published_ts": now_utc().timestamp(),
+        "origin": "web_page",
+    }]
+
+
+async def read_text_file(path: Path) -> str | None:
+    try:
+        if path.stat().st_size > MAX_FILE_BYTES:
+            return None
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+
+
+async def scan_workspace_root(root: str) -> list[dict[str, Any]]:
+    root_path = Path(root)
+    if not root_path.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    for current_root, dirnames, filenames in os.walk(root_path):
+        dirnames[:] = [name for name in dirnames if name not in EXCLUDE_DIRS]
+        base = Path(current_root)
+        for filename in filenames:
+            path = base / filename
+            if path.suffix.lower() not in SOURCE_EXTENSIONS and path.name not in {"Dockerfile", "docker-compose.yml"}:
+                continue
+            content = await read_text_file(path)
+            if not content:
+                continue
+            category, _ = classify_artifact(str(path), content)
+            excerpt = content.strip().replace("\r\n", "\n")[:MAX_SNIPPET_CHARS]
+            items.append(
+                {
+                    "text": f"Path: {path}\nCategory: {category}\n\n{excerpt}",
+                    "path": str(path),
+                    "source_id": f"workspace_{slugify(str(root_path))}",
+                    "source_name": f"Workspace: {root_path}",
+                    "source_kind": "workspace",
+                    "source_url": str(root_path),
+                    "title": path.name,
+                    "summary": excerpt[:200],
+                    "published_at": iso_now(),
+                    "published_ts": now_utc().timestamp(),
+                    "origin": "workspace",
+                }
+            )
+    return items
+
+
+async def fetch_feed_items(client: AsyncClient, source: dict[str, Any]) -> list[dict[str, Any]]:
+    if not source.get("enabled", True) or source.get("paused"):
+        return []
+    kind = source["kind"]
+    if kind == "workspace":
+        return await scan_workspace_root(source["root"])
+    if kind == "rss":
+        return await fetch_rss_items(client, source)
+    if kind == "github_atom":
+        return await fetch_github_atom_items(client, source)
+    if kind == "web_page":
+        return await fetch_web_page_items(client, source)
+    return []
+
+
+def source_effective_interval(source: dict[str, Any]) -> int:
+    manual = source.get("manual_interval_seconds")
+    recommended = int(source.get("recommended_interval_seconds", 3600))
+    if manual:
+        return max(30, int(manual))
+    empty_streak = int(source.get("empty_streak", 0))
+    error_streak = int(source.get("error_streak", 0))
+    backoff = 1.0
+    if empty_streak:
+        backoff *= min(4.0, 1.4 ** empty_streak)
+    if error_streak:
+        backoff *= min(8.0, 1.8 ** error_streak)
+    return int(clamp(recommended * backoff, 60, 6 * 60 * 60))
+
+
+def source_cadence_label(source: dict[str, Any]) -> str:
+    interval = source_effective_interval(source)
+    if interval < 1800:
+        return "high"
+    if interval < 7200:
+        return "medium"
+    return "slow"
+
+
+async def mark_source_state(source_id: str, state: str, detail: str, **extra: Any) -> None:
+    catalog = await load_source_catalog()
+    updated = []
+    for source in catalog:
+        if source["id"] == source_id:
+            source = {**source, "state": state, "detail": detail, "updated_at": iso_now(), **extra}
+            if state == "running":
+                source["last_attempt_at"] = iso_now()
+            if state == "success":
+                source["last_success_at"] = iso_now()
+        updated.append(source)
+    await save_source_catalog(updated)
+    app.state.source_status[source_id] = {"state": state, "detail": detail, "updated_at": iso_now(), **extra}
+
+
+async def refresh_source_schedule(source: dict[str, Any], success: bool, item_count: int) -> dict[str, Any]:
+    next_interval = source_effective_interval(source)
+    if success:
+        if item_count == 0:
+            source["empty_streak"] = int(source.get("empty_streak", 0)) + 1
+        else:
+            source["empty_streak"] = 0
+        source["error_streak"] = 0
+        next_interval = source_effective_interval(source)
+    else:
+        source["error_streak"] = int(source.get("error_streak", 0)) + 1
+        next_interval = source_effective_interval(source)
+    source["next_refresh_at"] = (now_utc() + timedelta(seconds=next_interval)).strftime(DATE_FMT)
+    source["state"] = "success" if success else "error"
+    source["detail"] = f"{item_count} items processed" if success else source.get("detail", "error")
+    source["updated_at"] = iso_now()
+    return source
+
+
+def source_due(source: dict[str, Any], current: datetime) -> bool:
+    if not source.get("enabled", True) or source.get("paused"):
+        return False
+    next_refresh_at = parse_dt(source.get("next_refresh_at"))
+    if not next_refresh_at:
+        return True
+    return next_refresh_at <= current
+
+
+async def fetch_due_sources(http_client: AsyncClient, redis_client: aioredis.Redis, sources: list[dict[str, Any]]) -> None:
+    for source in sources:
+        source_id = source["id"]
+        await mark_source_state(source_id, "running", "scanning")
+        try:
+            items = await fetch_feed_items(http_client, source)
+            processed = 0
+            for item in items:
+                record = await process_item(item)
+                if record:
+                    processed += 1
+            updated = await refresh_source_schedule(source, True, processed)
+            await mark_source_state(source_id, updated["state"], updated["detail"], next_refresh_at=updated["next_refresh_at"])
+            catalog = await load_source_catalog()
+            for idx, current in enumerate(catalog):
+                if current["id"] == source_id:
+                    catalog[idx] = {**current, **updated}
+                    break
+            await save_source_catalog(catalog)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logging.error("Source %s failed: %s", source_id, exc)
+            source["detail"] = str(exc)[:120]
+            updated = await refresh_source_schedule(source, False, 0)
+            updated["detail"] = source["detail"]
+            await mark_source_state(source_id, "error", updated["detail"], next_refresh_at=updated["next_refresh_at"])
+            catalog = await load_source_catalog()
+            for idx, current in enumerate(catalog):
+                if current["id"] == source_id:
+                    catalog[idx] = {**current, **updated}
+                    break
+            await save_source_catalog(catalog)
+
+
+async def poll_sources_loop(http_client: AsyncClient, redis_client: aioredis.Redis) -> None:
+    while True:
+        catalog = await load_source_catalog()
+        current = now_utc()
+        due = [source for source in catalog if source_due(source, current)]
+        if due:
+            await fetch_due_sources(http_client, redis_client, due[:4])
+        next_refreshes = [parse_dt(item.get("next_refresh_at")) for item in catalog if item.get("enabled", True) and not item.get("paused")]
+        future_slots = [slot for slot in next_refreshes if slot and slot > current]
+        sleep_for = app.state.config.poll_tick_seconds
+        if future_slots:
+            sleep_for = min(sleep_for, max(15, int((min(future_slots) - current).total_seconds())))
+        await asyncio.sleep(max(15, sleep_for))
+
+
+async def vector_watchdog_loop() -> None:
+    while True:
+        if getattr(app.state, "qdrant", None) and not getattr(app.state, "vector_ready", False):
+            try:
+                await ensure_qdrant_collection()
+            except Exception as exc:
+                logging.warning("Qdrant watchdog retry failed: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def reindex_recent_artifacts() -> None:
+    if not getattr(app.state, "vector_ready", False):
+        return
+    redis_client: aioredis.Redis = app.state.redis
+    raw_records = await redis_client.lrange(ARTIFACTS_KEY, 0, MAX_RECENT_ARTIFACTS - 1)
+    indexed = 0
+    for raw in raw_records:
+        try:
+            await qdrant_upsert(json.loads(raw))
+            indexed += 1
+        except Exception as exc:
+            app.state.vector_status = "degraded"
+            logging.warning("Reindex stopped after %s records: %s", indexed, exc)
+            return
+    if indexed:
+        app.state.vector_status = "ready"
+        logging.info("Reindexed %s recent artifacts", indexed)
+
+
+async def start_telethon_userbot(http_client: AsyncClient, redis_client: aioredis.Redis) -> None:
+    cfg: Config = app.state.config
+    if not cfg.has_telethon:
+        logging.info("Telethon disabled because credentials are missing")
+        return
+    os.makedirs("sessions", exist_ok=True)
+    client = TelegramClient("sessions/userbot", cfg.telegram_api_id, cfg.telegram_api_hash)
+
+    @client.on(events.NewMessage(chats=cfg.target_channels if cfg.target_channels else None))
+    async def handler(event: Any) -> None:
+        text = event.message.message
+        if not text:
+            return
+        chat = await event.get_chat()
+        chat_title = getattr(chat, "title", getattr(chat, "username", "Telegram Chat"))
+        await process_item(
+            {
+                "text": text,
+                "path": "telegram",
+                "source_id": f"tg_{slugify(chat_title)}",
+                "source_name": f"TG: {chat_title}",
+                "source_kind": "telegram",
+                "source_url": "",
+                "title": chat_title,
+                "summary": text[:160],
+                "published_at": iso_now(),
+                "published_ts": now_utc().timestamp(),
+                "origin": "telegram",
+            },
+            function_name="telegram",
+        )
+
+    await client.start()
+    app.state.telethon_client = client
+    logging.info("Telethon userbot started")
+    try:
+        await client.run_until_disconnected()
+    except asyncio.CancelledError:
+        raise
+    finally:
+        app.state.telethon_client = None
+
+
+async def count_artifacts() -> int:
+    client: QdrantClient | None = getattr(app.state, "qdrant", None)
+    if client and getattr(app.state, "vector_ready", False):
+        cfg: Config = app.state.config
+
+        def _count() -> int:
+            return client.count(collection_name=cfg.qdrant_collection, exact=True).count
+
+        try:
+            return int(await asyncio.to_thread(_count))
+        except Exception:
+            pass
+    redis_client: aioredis.Redis = app.state.redis
+    return int(await redis_client.llen(ARTIFACTS_KEY))
+
+
+async def load_recent_artifacts(limit: int = 80) -> list[dict[str, Any]]:
+    client: QdrantClient | None = getattr(app.state, "qdrant", None)
+    if client and getattr(app.state, "vector_ready", False):
+        cfg: Config = app.state.config
+
+        def _scroll() -> list[dict[str, Any]]:
+            records, _ = client.scroll(
+                collection_name=cfg.qdrant_collection,
+                limit=max(limit, 200),
+                with_payload=True,
+                with_vectors=False,
+            )
+            items: list[dict[str, Any]] = []
+            for record in records:
+                payload = dict(record.payload or {})
+                payload["id"] = str(record.id)
+                items.append(payload)
+            items.sort(key=lambda item: item.get("published_ts", 0), reverse=True)
+            return items[:limit]
+
+        try:
+            return await asyncio.to_thread(_scroll)
+        except Exception:
+            pass
+    redis_client: aioredis.Redis = app.state.redis
+    raw = await redis_client.lrange(ARTIFACTS_KEY, 0, limit - 1)
+    return [json.loads(item) for item in raw]
+
+
+async def load_alerts(limit: int = 40) -> list[dict[str, Any]]:
+    redis_client: aioredis.Redis = app.state.redis
+    raw = await redis_client.lrange(ALERTS_KEY, 0, limit - 1)
+    return [json.loads(item) for item in raw]
+
+
+def apply_client_filters(artifacts: list[dict[str, Any]], params: dict[str, Any]) -> list[dict[str, Any]]:
+    if not params:
+        return artifacts
+    query = normalize_ws(str(params.get("q", "") or "")).lower()
+    semantic = normalize_ws(str(params.get("semantic", "") or "")).lower()
+    search_text = semantic or query
+    types = {item.strip() for item in params.get("types", []) if item.strip()}
+    sources = {item.strip() for item in params.get("sources", []) if item.strip()}
+    tags = {item.strip().lower() for item in params.get("tags", []) if item.strip()}
+    min_rating = params.get("min_rating")
+    max_rating = params.get("max_rating")
+    min_complexity = params.get("min_complexity")
+    max_complexity = params.get("max_complexity")
+    date_from_ts = params.get("date_from_ts")
+    date_to_ts = params.get("date_to_ts")
+
+    filtered = []
+    for item in artifacts:
+        if types and item.get("type") not in types:
+            continue
+        if sources and item.get("source_name") not in sources and item.get("source_id") not in sources:
+            continue
+        if min_rating is not None and int(item.get("rating", 0)) < min_rating:
+            continue
+        if max_rating is not None and int(item.get("rating", 0)) > max_rating:
+            continue
+        if min_complexity is not None and int(item.get("complexity", 0)) < min_complexity:
+            continue
+        if max_complexity is not None and int(item.get("complexity", 0)) > max_complexity:
+            continue
+        if date_from_ts is not None and float(item.get("published_ts", 0)) < date_from_ts:
+            continue
+        if date_to_ts is not None and float(item.get("published_ts", 0)) > date_to_ts:
+            continue
+        if tags:
+            item_tags = {str(tag).lower() for tag in item.get("tags", [])}
+            if not (tags & item_tags):
+                continue
+        if search_text:
+            blob = normalize_ws(
+                " ".join(
+                    [
+                        item.get("title", ""),
+                        item.get("summary", ""),
+                        item.get("raw", ""),
+                        " ".join(item.get("tags", [])),
+                        item.get("source_name", ""),
+                        item.get("source_id", ""),
+                    ]
+                )
+            ).lower()
+            if search_text not in blob and not any(search_text in str(tag).lower() for tag in item.get("tags", [])):
+                continue
+        filtered.append(item)
+    filtered.sort(key=lambda item: item.get("published_ts", 0), reverse=True)
+    return filtered
+
+
+async def query_artifacts(params: dict[str, Any], limit: int = 100) -> list[dict[str, Any]]:
+    query = params.get("semantic") or params.get("q")
+    filters = build_filter_conditions(params)
+    if query and getattr(app.state, "vector_ready", False):
+        try:
+            return await qdrant_search(query, filters, limit=limit)
+        except Exception as exc:
+            logging.warning("Vector search failed, falling back to recent list: %s", exc)
+    if getattr(app.state, "vector_ready", False):
+        try:
+            return await qdrant_search(None, filters, limit=limit)
+        except Exception:
+            pass
+    artifacts = await load_recent_artifacts(limit=MAX_PROMPT_ITEMS)
+    return apply_client_filters(artifacts, params)
+
+
+def parse_csv(value: str | None) -> list[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+def parse_request_filters(request: Request) -> dict[str, Any]:
+    qp = request.query_params
+    params: dict[str, Any] = {
+        "q": qp.get("q", ""),
+        "semantic": qp.get("semantic", ""),
+        "types": parse_csv(qp.get("types")),
+        "sources": parse_csv(qp.get("sources")),
+        "tags": parse_csv(qp.get("tags")),
+    }
+    for key in ["min_rating", "max_rating", "min_complexity", "max_complexity"]:
+        raw = qp.get(key, "")
+        if raw:
+            try:
+                params[key] = int(raw)
+            except Exception:
+                params[key] = None
+    if qp.get("date_from"):
+        try:
+            start = datetime.strptime(qp.get("date_from"), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            params["date_from_ts"] = start.timestamp()
+        except Exception:
+            params["date_from_ts"] = None
+    if qp.get("date_to"):
+        try:
+            end = datetime.strptime(qp.get("date_to"), "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+            params["date_to_ts"] = end.timestamp()
+        except Exception:
+            params["date_to_ts"] = None
+    return params
+
+
+def render_badge(text: str, cls: str = "") -> str:
+    return f'<span class="badge {cls}">{html.escape(text)}</span>'
+
+
+def render_source_card(source: dict[str, Any]) -> str:
+    state = html.escape(str(source.get("state", "idle")))
+    detail = html.escape(str(source.get("detail", "")))
+    cadence = html.escape(source_cadence_label(source))
+    group = html.escape(str(source.get("preset_group", "Custom")))
+    interval = int(source_effective_interval(source))
+    next_refresh = html.escape(format_relative(source.get("next_refresh_at")))
+    reason = html.escape(str(source.get("cadence_reason", "")))
+    enabled = "checked" if source.get("enabled", True) else ""
+    paused = "Resume" if source.get("paused") else "Pause"
+    manual = source.get("manual_interval_seconds") or ""
+    return f"""
+    <div class="source-card" data-source-id="{html.escape(source['id'])}">
+        <div class="source-head">
+            <div>
+                <div class="source-name">{html.escape(source.get('name', ''))}</div>
+                <div class="source-kind">{html.escape(source.get('kind', ''))} / {group}</div>
+            </div>
+            <div class="source-state {state}">{state}</div>
+        </div>
+        <div class="source-detail">{detail}</div>
+        <div class="source-mini">
+            {render_badge(f"interval {interval}s", cadence)}
+            {render_badge(f"next {next_refresh}")}
+            {render_badge(f"manual {manual or 'auto'}")}
+        </div>
+        <div class="source-reason">{reason}</div>
+        <div class="source-actions">
+            <label class="toggle"><input type="checkbox" data-source-enabled="{html.escape(source['id'])}" {enabled} onchange="toggleSourceEnabled('{html.escape(source['id'])}', this.checked)" /> enabled</label>
+            <label class="interval">
+                <span>interval</span>
+                <input type="number" min="30" step="30" value="{html.escape(str(manual or interval))}" data-source-interval="{html.escape(source['id'])}" />
+            </label>
+            <button type="button" onclick="saveSourceInterval('{html.escape(source['id'])}')">save</button>
+            <button type="button" onclick="deleteSource('{html.escape(source['id'])}')">delete</button>
+            <button type="button" onclick="toggleSourcePaused('{html.escape(source['id'])}', {str(bool(source.get('paused'))).lower()})">{paused}</button>
+        </div>
+    </div>
+    """
+
+
+def render_artifact_card(item: dict[str, Any]) -> str:
+    tags = "".join(render_badge(tag, "tag") for tag in item.get("tags", [])[:8]) or render_badge("no tags", "muted")
+    entities = "".join(render_badge(str(entity), "entity") for entity in item.get("entities", [])[:6]) or render_badge("no entities", "muted")
+    score = int(item.get("rating", 0))
+    type_cls = f"type-{slugify(item.get('type', 'noise'))}"
+    created = html.escape(format_relative(item.get("published_at")))
+    search_blob = html.escape(item.get("search_blob", ""))
+    return f"""
+    <article class="artifact-card" data-artifact-id="{html.escape(item['id'])}" data-search="{search_blob}">
+        <div class="artifact-top">
+            <label class="select-box"><input type="checkbox" class="artifact-select" value="{html.escape(item['id'])}" onchange="syncSelection()" /></label>
+            <div class="artifact-score">{score}</div>
+            <div class="artifact-type {type_cls}">{html.escape(item.get('type', 'Unknown'))}</div>
+        </div>
+        <div class="artifact-title">{html.escape(item.get('title', 'Untitled'))}</div>
+        <div class="artifact-meta">
+            <span>{html.escape(item.get('source_name', ''))}</span>
+            <span>{html.escape(item.get('source_kind', ''))}</span>
+            <span>{created}</span>
+        </div>
+        <div class="artifact-summary">{html.escape(item.get('summary', ''))}</div>
+        <div class="artifact-chips">{tags}</div>
+        <div class="artifact-chips subtle">{entities}</div>
+        <pre>{html.escape(item.get('raw', ''))}</pre>
+    </article>
+    """
+
+
+def render_telemetry_bar(snapshot: dict[str, Any]) -> str:
+    return f"""
+    <div class="telemetry-bar">
+        <div class="telemetry-left">
+            <strong>{html.escape(snapshot['provider'])}</strong>
+            <span>{html.escape(snapshot['model'])}</span>
+            <span>vector: {html.escape(snapshot['vector_status'])}</span>
+        </div>
+        <div class="telemetry-mid">
+            <span>tokens {snapshot['tokens_total']}/{snapshot['token_limit']}</span>
+            <span>session {snapshot['session_tokens']}</span>
+            <span>period {snapshot['period_tokens']}</span>
+            <span>cost ${snapshot['cost_total']}</span>
+        </div>
+        <div class="telemetry-right">
+            <span>remaining {snapshot['remaining_tokens']} tok</span>
+            <span>${snapshot['remaining_usd']} left</span>
+            <span>indexed {snapshot['indexed_artifacts']}</span>
+            <span>sync {html.escape(format_relative(snapshot['last_sync']))}</span>
+        </div>
+    </div>
+    """
+
+
+def render_provider_panel(provider: dict[str, Any], models: list[str]) -> str:
+    model_options = "".join(
+        f'<option value="{html.escape(model)}" {"selected" if model == provider.get("model") else ""}>{html.escape(model)}</option>'
+        for model in (models or [provider.get("model", "gpt-4o-mini")])
+    )
+    return f"""
+    <div class="panel">
+        <h2>AI Provider</h2>
+        <div class="form-grid">
+            <input id="providerName" value="{html.escape(provider.get('name', ''))}" placeholder="Provider name" />
+            <input id="providerKind" value="{html.escape(provider.get('kind', 'openai_compatible'))}" placeholder="Provider kind" />
+            <input id="providerBaseUrl" value="{html.escape(provider.get('base_url', ''))}" placeholder="Base URL" />
+            <input id="providerApiKey" value="" type="password" autocomplete="new-password" placeholder="API key (оставьте пустым, чтобы не менять)" />
+            <select id="providerModel">{model_options}</select>
+            <input id="providerTokenLimit" type="number" value="{int(provider.get('monthly_token_limit', 500000))}" placeholder="Token limit" />
+            <input id="providerBudget" type="number" step="0.01" value="{float(provider.get('monthly_budget_usd', 25.0))}" placeholder="Budget USD" />
+            <input id="providerInputPrice" type="number" step="0.01" value="{float(provider.get('input_price_per_1m', 2.0))}" placeholder="Input $/1M" />
+            <input id="providerOutputPrice" type="number" step="0.01" value="{float(provider.get('output_price_per_1m', 8.0))}" placeholder="Output $/1M" />
+        </div>
+        <div class="panel-actions">
+            <button type="button" onclick="loadModels()">Load models</button>
+            <button type="button" onclick="saveProvider()">Save provider</button>
+        </div>
+    </div>
+    """
+
+
+def render_source_form() -> str:
+    options = """
+        <option value="rss">rss</option>
+        <option value="github_atom">github_atom</option>
+        <option value="web_page">web_page</option>
+        <option value="workspace">workspace</option>
+    """
+    return f"""
+    <div class="panel">
+        <h2>Add source</h2>
+        <div class="form-grid">
+            <input id="newSourceName" placeholder="Name" />
+            <select id="newSourceKind">{options}</select>
+            <input id="newSourceUrl" placeholder="RSS URL or workspace root" />
+            <input id="newSourceRepo" placeholder="GitHub repo" />
+            <input id="newSourceBranch" placeholder="Branch" value="main" />
+            <input id="newSourceInterval" type="number" min="30" step="30" value="3600" placeholder="Interval seconds" />
+            <input id="newSourceReason" placeholder="Cadence reason" />
+            <label class="toggle"><input id="newSourceEnabled" type="checkbox" checked /> enabled</label>
+        </div>
+        <div class="panel-actions">
+            <button type="button" onclick="addSource()">Add source</button>
+        </div>
+    </div>
+    """
+
+
+def render_toolbar(filters: dict[str, Any], sources: list[dict[str, Any]], types: list[str]) -> str:
+    sources_csv = ",".join(filters.get("sources", []))
+    types_csv = ",".join(filters.get("types", []))
+    tags_csv = ",".join(filters.get("tags", []))
+    return f"""
+    <details class="filter-drawer" {"open" if any(filters.values()) else ""}>
+    <summary>Фильтры / semantic search</summary>
+    <form class="toolbar" method="get" action="/">
+        <input name="q" value="{html.escape(filters.get('q', ''))}" placeholder="Text search..." />
+        <input name="semantic" value="{html.escape(filters.get('semantic', ''))}" placeholder="Semantic search..." />
+        <input name="types" value="{html.escape(types_csv)}" placeholder="Types comma separated" />
+        <input name="sources" value="{html.escape(sources_csv)}" placeholder="Sources comma separated" />
+        <input name="tags" value="{html.escape(tags_csv)}" placeholder="Tags comma separated" />
+        <input name="min_rating" type="number" min="0" max="100" value="{filters.get('min_rating', '') if filters.get('min_rating') is not None else ''}" placeholder="Min rating" />
+        <input name="max_rating" type="number" min="0" max="100" value="{filters.get('max_rating', '') if filters.get('max_rating') is not None else ''}" placeholder="Max rating" />
+        <input name="min_complexity" type="number" min="0" max="100" value="{filters.get('min_complexity', '') if filters.get('min_complexity') is not None else ''}" placeholder="Min complexity" />
+        <input name="max_complexity" type="number" min="0" max="100" value="{filters.get('max_complexity', '') if filters.get('max_complexity') is not None else ''}" placeholder="Max complexity" />
+        <input name="date_from" type="date" value="{html.escape(filters.get('date_from', ''))}" />
+        <input name="date_to" type="date" value="{html.escape(filters.get('date_to', ''))}" />
+        <button type="submit">Apply</button>
+        <a class="clear-link" href="/">Reset</a>
+    </form>
+    </details>
+    """
+
+
+async def summarize_selection(records: list[dict[str, Any]], action: str) -> dict[str, Any]:
+    cfg: Config = app.state.config
+    if provider_is_configured() and records:
+        text = render_prompt_merger(records)
+        try:
+            parsed, usage, _ = await call_provider(action, text, records)
+            cost = estimated_cost(usage)
+            await record_usage(app.state.provider_state.get("name", cfg.provider_name), app.state.provider_state.get("model", cfg.provider_model), action, usage, cost)
+            return parsed
+        except Exception as exc:
+            logging.warning("AI action %s fallback: %s", action, exc)
+    merged = render_prompt_merger(records)
+    return {
+        "title": f"{action.title()} canvas",
+        "purpose": "Сборка выбранных артефактов в единый рабочий пакет.",
+        "summary": make_summary_from_text(merged),
+        "merged_prompt": merged,
+        "instructions": "Скопируй этот пакет в нужный агентский workflow и используй как источник контекста.",
+        "killer_feature": "Единый пакет из живых артефактов с прозрачной структурой.",
+        "should_disappear": "Разрозненные фрагменты без цели и без связи.",
+        "tags": sorted({tag for record in records for tag in record.get("tags", [])})[:12],
+    }
+
+
+async def build_canvas_archive(records: list[dict[str, Any]], result: dict[str, Any]) -> bytes:
+    buf = io.BytesIO()
+    manifest = {
+        "created_at": iso_now(),
+        "count": len(records),
+        "title": result.get("title", "Canvas"),
+        "purpose": result.get("purpose", ""),
+        "summary": result.get("summary", ""),
+        "tags": result.get("tags", []),
+    }
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("canvas.md", build_canvas_markdown(records, result))
+        archive.writestr("canvas.json", json.dumps(result, ensure_ascii=False, indent=2))
+        archive.writestr("selected.json", json.dumps(records, ensure_ascii=False, indent=2))
+        archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        archive.writestr(
+            "instructions.md",
+            "# How to use\n\n"
+            "1. Open the canvas bundle.\n"
+            "2. Read the summary and purpose.\n"
+            "3. Use the merged prompt as a single context block.\n"
+            "4. Apply the instructions to the selected workflow.\n",
+        )
+    return buf.getvalue()
+
+
+def build_canvas_markdown(records: list[dict[str, Any]], result: dict[str, Any]) -> str:
+    sections = [
+        f"# {result.get('title', 'Canvas')}",
+        f"## Purpose\n{result.get('purpose', '')}",
+        f"## Summary\n{result.get('summary', '')}",
+        f"## Killer feature\n{result.get('killer_feature', '')}",
+        f"## Should disappear\n{result.get('should_disappear', '')}",
+        f"## Instructions\n{result.get('instructions', '')}",
+        "## Selected artifacts",
+    ]
+    for idx, record in enumerate(records, start=1):
+        sections.append(
+            f"### {idx}. {record.get('title', 'Untitled')}\n"
+            f"- Type: {record.get('type', '')}\n"
+            f"- Source: {record.get('source_name', '')}\n"
+            f"- Tags: {', '.join(record.get('tags', []))}\n"
+            f"- Summary: {record.get('summary', '')}\n"
+            f"- Content:\n\n```\n{record.get('raw', '')}\n```"
+        )
+    sections.append("## Merged prompt\n")
+    sections.append("```\n" + result.get("merged_prompt", "") + "\n```")
+    return "\n\n".join(sections)
+
+
+async def load_selected_records(ids: list[str]) -> list[dict[str, Any]]:
+    records = await qdrant_retrieve(ids)
+    if records:
+        return records
+    all_records = await load_recent_artifacts(limit=MAX_RECENT_ARTIFACTS)
+    by_id = {item["id"]: item for item in all_records if item.get("id")}
+    return [by_id[item_id] for item_id in ids if item_id in by_id]
+
+
+@app.get("/health")
+async def health() -> JSONResponse:
+    redis_client: aioredis.Redis = app.state.redis
+    await redis_client.ping()
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/metrics")
+async def metrics() -> JSONResponse:
+    telemetry = await get_telemetry_snapshot()
+    return JSONResponse(telemetry)
+
+
+@app.get("/api/state")
+async def api_state(username: str = Depends(authenticate)) -> JSONResponse:
+    sources = await load_source_catalog()
+    telemetry = await get_telemetry_snapshot()
+    return JSONResponse({"sources": sources, "telemetry": telemetry, "user": username})
+
+
+@app.get("/api/artifacts")
+async def api_artifacts(
+    request: Request,
+    username: str = Depends(authenticate),
+) -> JSONResponse:
+    params = parse_request_filters(request)
+    artifacts = await query_artifacts(params, limit=120)
+    return JSONResponse({"items": artifacts, "count": len(artifacts), "user": username})
+
+
+@app.get("/api/sources")
+async def api_sources(username: str = Depends(authenticate)) -> JSONResponse:
+    return JSONResponse({"items": await load_source_catalog(), "user": username})
+
+
+@app.post("/api/sources")
+async def add_source(payload: dict[str, Any] = Body(...), username: str = Depends(authenticate)) -> JSONResponse:
+    catalog = await load_source_catalog()
+    source_name = str(payload.get("name", "")).strip()
+    kind = str(payload.get("kind", "rss")).strip()
+    if not source_name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    source_id = payload.get("id") or slugify(source_name)
+    new_source = {
+        "id": source_id,
+        "name": source_name,
+        "kind": kind,
+        "enabled": bool(payload.get("enabled", True)),
+        "recommended_interval_seconds": int(payload.get("recommended_interval_seconds", 3600)),
+        "manual_interval_seconds": int(payload["manual_interval_seconds"]) if payload.get("manual_interval_seconds") else None,
+        "cadence_reason": str(payload.get("cadence_reason", "")),
+        "paused": bool(payload.get("paused", False)),
+        "empty_streak": 0,
+        "error_streak": 0,
+        "last_attempt_at": None,
+        "last_success_at": None,
+        "next_refresh_at": None,
+        "state": "idle",
+        "detail": "added",
+        "updated_at": iso_now(),
+    }
+    if kind in {"rss", "web_page"}:
+        url = str(payload.get("url", "")).strip()
+        if not url:
+            raise HTTPException(status_code=400, detail=f"URL is required for {kind}")
+        new_source["url"] = url
+    elif kind == "github_atom":
+        repo = str(payload.get("repo", "")).strip()
+        if not repo:
+            raise HTTPException(status_code=400, detail="Repo is required for github_atom")
+        new_source["repo"] = repo
+        new_source["branch"] = str(payload.get("branch", "main")).strip() or "main"
+    elif kind == "workspace":
+        root = str(payload.get("url", "")).strip()
+        if not root:
+            raise HTTPException(status_code=400, detail="Workspace root is required")
+        new_source["root"] = root
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported source kind")
+
+    catalog = [item for item in catalog if item["id"] != source_id]
+    await app.state.redis.srem(SOURCE_DELETED_KEY, source_id)
+    catalog.insert(0, new_source)
+    await save_source_catalog(catalog)
+    return JSONResponse({"ok": True, "item": new_source, "user": username})
+
+
+@app.patch("/api/sources/{source_id}")
+async def update_source(source_id: str, payload: dict[str, Any] = Body(...), username: str = Depends(authenticate)) -> JSONResponse:
+    catalog = await load_source_catalog()
+    updated_source = None
+    for idx, source in enumerate(catalog):
+        if source["id"] != source_id:
+            continue
+        source.update({k: v for k, v in payload.items() if v is not None})
+        if "manual_interval_seconds" in payload and payload["manual_interval_seconds"] not in ("", None):
+            source["manual_interval_seconds"] = int(payload["manual_interval_seconds"])
+        if "enabled" in payload:
+            source["enabled"] = bool(payload["enabled"])
+        if "paused" in payload:
+            source["paused"] = bool(payload["paused"])
+        source["updated_at"] = iso_now()
+        catalog[idx] = source
+        updated_source = source
+        break
+    if not updated_source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    await save_source_catalog(catalog)
+    return JSONResponse({"ok": True, "item": updated_source, "user": username})
+
+
+@app.delete("/api/sources/{source_id}")
+async def delete_source(source_id: str, username: str = Depends(authenticate)) -> JSONResponse:
+    catalog = await load_source_catalog()
+    catalog = [item for item in catalog if item["id"] != source_id]
+    await app.state.redis.sadd(SOURCE_DELETED_KEY, source_id)
+    await save_source_catalog(catalog)
+    return JSONResponse({"ok": True, "user": username})
+
+
+@app.get("/api/provider/models")
+async def api_provider_models(username: str = Depends(authenticate)) -> JSONResponse:
+    models = await fetch_provider_models()
+    provider = app.state.provider_state
+    provider["loaded_models"] = models
+    await save_provider_state(provider)
+    return JSONResponse({"items": models, "user": username})
+
+
+@app.post("/api/provider/select")
+async def api_provider_select(payload: dict[str, Any] = Body(...), username: str = Depends(authenticate)) -> JSONResponse:
+    provider = app.state.provider_state
+    for key in [
+        "name",
+        "kind",
+        "base_url",
+        "api_key",
+        "model",
+        "monthly_token_limit",
+        "monthly_budget_usd",
+        "input_price_per_1m",
+        "output_price_per_1m",
+    ]:
+        if key in payload and payload[key] not in (None, ""):
+            provider[key] = payload[key]
+    provider["monthly_token_limit"] = int(provider.get("monthly_token_limit", 500000))
+    provider["monthly_budget_usd"] = float(provider.get("monthly_budget_usd", 25.0))
+    provider["input_price_per_1m"] = float(provider.get("input_price_per_1m", 2.0))
+    provider["output_price_per_1m"] = float(provider.get("output_price_per_1m", 8.0))
+    provider["updated_at"] = iso_now()
+    await save_provider_state(provider)
+    return JSONResponse({"ok": True, "item": provider, "user": username})
+
+
+@app.get("/api/provider/status")
+async def api_provider_status(username: str = Depends(authenticate)) -> JSONResponse:
+    provider = app.state.provider_state
+    return JSONResponse({"item": provider, "user": username})
+
+
+@app.post("/api/ai/action")
+async def api_ai_action(payload: dict[str, Any] = Body(...), username: str = Depends(authenticate)) -> JSONResponse:
+    action = str(payload.get("action", "summary")).strip()
+    ids = [str(item) for item in payload.get("ids", []) if item]
+    text = str(payload.get("text", "") or "")
+    records = await load_selected_records(ids) if ids else []
+    if not text:
+        text = render_prompt_merger(records) if records else "No content"
+    result = await summarize_selection(records or [{"title": "Manual input", "type": "Prompt", "source_name": "manual", "tags": [], "summary": "", "raw": text}], action)
+    if text and not records:
+        result.setdefault("summary", make_summary_from_text(text))
+    return JSONResponse({"ok": True, "result": result, "user": username})
+
+
+@app.post("/api/export")
+async def api_export(payload: dict[str, Any] = Body(...), username: str = Depends(authenticate)) -> Response:
+    fmt = str(payload.get("format", "md")).strip().lower()
+    ids = [str(item) for item in payload.get("ids", []) if item]
+    records = await load_selected_records(ids)
+    if fmt == "json":
+        content = json.dumps(
+            {
+                "exported_at": iso_now(),
+                "count": len(records),
+                "items": records,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="promptops-export.json"'},
+        )
+    markdown = build_canvas_markdown(records, await summarize_selection(records, "canvas"))
+    return Response(
+        content=markdown,
+        media_type="text/markdown",
+        headers={"Content-Disposition": 'attachment; filename="promptops-export.md"'},
+    )
+
+
+@app.post("/api/canvas/preview")
+async def api_canvas_preview(payload: dict[str, Any] = Body(...), username: str = Depends(authenticate)) -> JSONResponse:
+    ids = [str(item) for item in payload.get("ids", []) if item]
+    records = await load_selected_records(ids)
+    result = await summarize_selection(records, "canvas")
+    return JSONResponse({"ok": True, "canvas": result, "records": records, "user": username})
+
+
+@app.post("/api/canvas/archive")
+async def api_canvas_archive(payload: dict[str, Any] = Body(...), username: str = Depends(authenticate)) -> Response:
+    ids = [str(item) for item in payload.get("ids", []) if item]
+    records = await load_selected_records(ids)
+    result = await summarize_selection(records, "canvas")
+    archive = await build_canvas_archive(records, result)
+    safe_name = slugify(result.get("title", "canvas"))
+    return Response(
+        content=archive,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.zip"'},
+    )
+
+
+@app.get("/", response_class=HTMLResponse)
+async def get_dashboard(request: Request, username: str = Depends(authenticate)) -> HTMLResponse:
+    filters = parse_request_filters(request)
+    artifacts = await query_artifacts(filters, limit=MAX_PROMPT_ITEMS)
+    sources = await load_source_catalog()
+    provider = app.state.provider_state
+    snapshot = await get_telemetry_snapshot()
+    artifacts_html = "".join(render_artifact_card(item) for item in artifacts) or '<div class="empty">Пока ничего не найдено.</div>'
+    alerts = await load_alerts(16)
+    alerts_html = "".join(
+        f'<div class="mini-alert"><strong>{html.escape(item.get("type", ""))}</strong><span>{html.escape(item.get("summary", ""))}</span></div>'
+        for item in alerts[:8]
+    ) or '<div class="empty small">Высоких сигналов пока нет.</div>'
+    source_html = "".join(render_source_card(source) for source in sources) or '<div class="empty small">Источников нет.</div>'
+    source_names = sorted({item.get("source_name", "") for item in sources if item.get("source_name")})
+    types = sorted({item.get("type", "") for item in artifacts if item.get("type")})
+    models = provider.get("loaded_models", [])
+    page = f"""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Prompt Ops Control Tower</title>
+        <style>
+            :root {{
+                --bg: #090a0b;
+                --panel: #111316;
+                --panel-raised: #171a1f;
+                --line: #2a2e35;
+                --text: #f1efe7;
+                --muted: #969b9f;
+                --accent: #d9ff43;
+                --accent2: #5bd8ff;
+                --accent3: #ff984f;
+                --danger: #ff6b79;
+            }}
+            * {{ box-sizing: border-box; }}
+            body {{
+                margin: 0;
+                min-height: 100vh;
+                color: var(--text);
+                font-family: "Bahnschrift", "Aptos Narrow", "Segoe UI", sans-serif;
+                background-color: var(--bg);
+                background-image:
+                    linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px),
+                    radial-gradient(circle at 72% -10%, rgba(91,216,255,.12), transparent 30%);
+                background-size: 28px 28px, 28px 28px, auto;
+                padding-bottom: 92px;
+            }}
+            .shell {{ max-width: 1680px; margin: 0 auto; padding: 18px; }}
+            .hero {{
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                padding: 22px;
+                background: linear-gradient(115deg, #14171b 0%, #0e1013 68%, rgba(91,216,255,.08) 100%);
+                box-shadow: 0 18px 60px rgba(0,0,0,.34);
+            }}
+            .hero h1 {{ margin: 10px 0 0; max-width: 17ch; font-size: clamp(30px, 4vw, 54px); line-height: .94; letter-spacing: -.045em; text-transform: uppercase; }}
+            .eyebrow {{ color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }}
+            .hero p {{ color: #c9d8d2; max-width: 78ch; line-height: 1.6; }}
+            .hero-grid {{ display: grid; grid-template-columns: 1.35fr 0.85fr; gap: 18px; align-items: start; }}
+            .hero-badges {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }}
+            .badge, .chip {{
+                display: inline-flex;
+                gap: 6px;
+                align-items: center;
+                padding: 8px 12px;
+                border-radius: 4px;
+                border: 1px solid var(--line);
+                background: rgba(255,255,255,0.05);
+                color: #d8e6df;
+                font-size: 12px;
+            }}
+            .badge.tag {{ background: rgba(110,231,183,0.12); }}
+            .badge.entity {{ background: rgba(96,165,250,0.12); }}
+            .badge.muted {{ color: var(--muted); }}
+            .dashboard-grid {{ display: grid; grid-template-columns: 360px 1fr; gap: 18px; margin-top: 18px; }}
+            .panel {{
+                border: 1px solid var(--line);
+                border-radius: 7px;
+                background: var(--panel);
+                box-shadow: 0 14px 42px rgba(0,0,0,.24);
+                padding: 18px;
+            }}
+            .panel h2 {{ margin: 0 0 14px; font-size: 18px; }}
+            .panel .empty {{ padding: 18px; text-align: center; color: var(--muted); border: 1px dashed rgba(141,168,212,0.22); border-radius: 5px; }}
+            .panel .empty.small {{ padding: 14px; font-size: 13px; }}
+            .panel-actions {{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }}
+            .panel-actions button, .toolbar button, .toolbar a, .source-actions button {{
+                border: 1px solid rgba(141,168,212,0.18);
+                background: rgba(255,255,255,0.06);
+                color: var(--text);
+                border-radius: 5px;
+                padding: 10px 14px;
+                cursor: pointer;
+                text-decoration: none;
+            }}
+            .filter-drawer {{ margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }}
+            .filter-drawer summary {{ cursor: pointer; color: var(--accent2); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
+            .toolbar {{
+                display: grid;
+                grid-template-columns: repeat(6, minmax(0, 1fr));
+                gap: 10px;
+                margin-top: 18px;
+            }}
+            .toolbar input, .toolbar select, .form-grid input, .form-grid select {{
+                width: 100%;
+                border-radius: 5px;
+                border: 1px solid var(--line);
+                background: rgba(255,255,255,0.04);
+                color: var(--text);
+                padding: 12px 14px;
+                outline: none;
+            }}
+            .toolbar .clear-link {{ display: inline-flex; align-items: center; justify-content: center; }}
+            .mini-stats {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }}
+            .stat-card {{
+                border: 1px solid var(--line);
+                border-radius: 6px;
+                padding: 14px;
+                background: rgba(255,255,255,0.03);
+            }}
+            .stat-label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; }}
+            .stat-value {{ font-size: 32px; font-weight: 800; margin-top: 8px; }}
+            .stat-note {{ color: #a8b9b3; margin-top: 6px; font-size: 13px; }}
+            .source-card, .artifact-card {{
+                border: 1px solid var(--line);
+                border-radius: 7px;
+                padding: 16px;
+                background: var(--panel-raised);
+                box-shadow: 0 8px 24px rgba(0,0,0,.2);
+            }}
+            .source-card + .source-card, .artifact-card + .artifact-card {{ margin-top: 12px; }}
+            .source-head, .artifact-top {{ display: flex; justify-content: space-between; gap: 10px; align-items: center; }}
+            .source-name, .artifact-title {{ font-weight: 800; font-size: 18px; }}
+            .source-kind, .source-detail, .source-reason, .artifact-meta {{ color: var(--muted); font-size: 12px; margin-top: 4px; }}
+            .source-mini, .artifact-chips {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }}
+            .source-actions {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }}
+            .source-actions .toggle, .source-actions .interval {{ display: inline-flex; gap: 8px; align-items: center; font-size: 12px; color: #d8e6df; }}
+            .source-actions .interval input {{ width: 110px; }}
+            .source-state {{ padding: 6px 10px; border-radius: 4px; font-size: 11px; text-transform: uppercase; }}
+            .source-state.success {{ background: rgba(110,231,183,0.14); color: #9ef0cc; }}
+            .source-state.error {{ background: rgba(251,113,133,0.14); color: #f9b0d2; }}
+            .source-state.running {{ background: rgba(96,165,250,0.14); color: #c9e0ff; }}
+            .artifact-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
+            .source-list {{ max-height: 76vh; overflow: auto; padding-right: 4px; scrollbar-color: var(--line) transparent; }}
+            .artifact-score {{
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 54px;
+                padding: 6px 10px;
+                border-radius: 4px;
+                background: var(--accent);
+                color: #041118;
+                font-weight: 800;
+            }}
+            .artifact-type {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent2); }}
+            .artifact-type.type-noise {{ color: var(--muted); }}
+            .artifact-summary {{ margin-top: 10px; color: #d8e6df; line-height: 1.55; }}
+            .artifact-card pre {{ margin: 12px 0 0; padding: 12px; border-radius: 5px; background: rgba(4,10,19,0.72); border: 1px solid rgba(141,168,212,0.10); white-space: pre-wrap; word-break: break-word; color: #b7c6dc; font-size: 12px; line-height: 1.5; }}
+            .section-title {{ display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin: 24px 0 12px; }}
+            .section-title h2 {{ margin: 0; }}
+            .section-title p {{ margin: 0; color: var(--muted); font-size: 13px; }}
+            .telemetry-bar {{
+                position: fixed;
+                left: 16px;
+                right: 16px;
+                bottom: 14px;
+                z-index: 40;
+                display: grid;
+                grid-template-columns: 1.1fr 1.1fr 1fr;
+                gap: 10px;
+                padding: 12px 14px;
+                border: 1px solid var(--line);
+                border-radius: 6px;
+                background: rgba(17,19,22,.96);
+                backdrop-filter: blur(14px);
+                box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+                font-size: 12px;
+            }}
+            .telemetry-left, .telemetry-mid, .telemetry-right {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }}
+            .telemetry-left strong {{ font-size: 13px; }}
+            .selected-badge {{ background: rgba(251,191,36,0.15); color: #ffd87d; }}
+            .form-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }}
+            .muted {{ color: var(--muted); }}
+            .controls {{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }}
+            .controls button {{ padding: 10px 14px; border-radius: 4px; border: 1px solid var(--line); background: #1a1d22; color: var(--text); cursor: pointer; }}
+            .controls button:first-child, .panel-actions button:first-child {{ background: var(--accent); border-color: var(--accent); color: #090a0b; font-weight: 800; }}
+            dialog {{ width: min(760px, calc(100vw - 32px)); max-height: 78vh; color: var(--text); background: #111316; border: 1px solid var(--line); border-radius: 7px; padding: 0; box-shadow: 0 30px 100px #000; }}
+            dialog::backdrop {{ background: rgba(0,0,0,.72); backdrop-filter: blur(3px); }}
+            .dialog-head {{ display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }}
+            .dialog-head button {{ background: transparent; color: var(--text); border: 1px solid var(--line); cursor: pointer; }}
+            #resultBody {{ margin: 0; padding: 18px; max-height: 62vh; overflow: auto; white-space: pre-wrap; color: #d7dde1; }}
+            @media (max-width: 1200px) {{
+                .hero-grid, .dashboard-grid, .artifact-grid, .telemetry-bar, .toolbar {{ grid-template-columns: 1fr; }}
+                .telemetry-bar {{ position: static; margin-top: 18px; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="shell">
+            <section class="hero">
+                <div class="hero-grid">
+                    <div>
+                        <div class="eyebrow">Prompt intelligence / live index</div>
+                        <div class="hero-badges">
+                            <span class="chip">User: {html.escape(username)}</span>
+                            <span class="chip">Session: {html.escape(app.state.session_id)}</span>
+                            <span class="chip">AI: {html.escape(provider.get("name", ""))}</span>
+                            <span class="chip">Models: {len(models) if models else 1}</span>
+                        </div>
+                        <h1>Signal desk for agent craft.</h1>
+                        <p>
+                            Панель собирает артефакты из RSS, GitHub, Habr и workspace, кладёт их в векторную БД,
+                            показывает цену AI-операций, помогает выбирать объекты для canvas и даёт экспорт в md/json/zip.
+                        </p>
+                        <div class="hero-badges">
+                            {render_badge(f"Artifacts {len(artifacts)}")}
+                            {render_badge(f"Alerts {len(alerts)}")}
+                            {render_badge(f"Vector {snapshot['vector_status']}")}
+                            {render_badge(f"Last sync {format_relative(snapshot['last_sync'])}")}
+                        </div>
+                        {render_toolbar(filters, sources, types)}
+                        <div class="controls">
+                            <button type="button" onclick="runAction('summary')">Summary</button>
+                            <button type="button" onclick="runAction('analysis')">Quick analysis</button>
+                            <button type="button" onclick="runAction('augment')">Augment</button>
+                            <button type="button" onclick="runAction('prune')">What to remove</button>
+                            <button type="button" onclick="previewCanvas()">Canvas preview</button>
+                            <button type="button" onclick="downloadCanvas()">Canvas archive</button>
+                            <button type="button" onclick="exportSelected('md')">Export md</button>
+                            <button type="button" onclick="exportSelected('json')">Export json</button>
+                            <button type="button" onclick="openPublishingStudio()">Publishing Studio</button>
+                            <a class="clear-link" href="/lite">Lite view</a>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="mini-stats">
+                            <div class="stat-card">
+                                <div class="stat-label">Total tokens</div>
+                                <div class="stat-value">{snapshot['tokens_total']}</div>
+                                <div class="stat-note">Limit {snapshot['token_limit']}</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">Remaining</div>
+                                <div class="stat-value">{snapshot['remaining_tokens']}</div>
+                                <div class="stat-note">${snapshot['remaining_usd']} budget left</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">Session</div>
+                                <div class="stat-value">{snapshot['session_tokens']}</div>
+                                <div class="stat-note">Period {snapshot['period_tokens']}</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">Index</div>
+                                <div class="stat-value">{snapshot['indexed_artifacts']}</div>
+                                <div class="stat-note">{snapshot['vector_status']} / sync {format_relative(snapshot['last_sync'])}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="dashboard-grid">
+                <aside>
+                    {render_source_form()}
+                    {render_provider_panel(provider, models)}
+                    <div class="panel">
+                        <h2>Sources / presets <span class="muted">{len(sources)}</span></h2>
+                        <div class="source-list">{source_html}</div>
+                    </div>
+                    <div class="panel">
+                        <h2>Signals</h2>
+                        {alerts_html}
+                    </div>
+                </aside>
+
+                <main>
+                    <div class="section-title">
+                        <div>
+                            <h2>Artifacts</h2>
+                            <p>Комбинируйте поиск, фильтры и semantic query. Выбранные карточки можно экспортировать или собрать в canvas.</p>
+                        </div>
+                        <div class="chip selected-badge">Selected: <span id="selectedCount">0</span></div>
+                    </div>
+                    <div class="artifact-grid" id="artifactGrid">
+                        {artifacts_html}
+                    </div>
+                </main>
+            </div>
+        </div>
+
+        {render_telemetry_bar(snapshot)}
+        <dialog id="resultDialog">
+            <div class="dialog-head"><strong id="resultTitle">Result</strong><button onclick="document.getElementById('resultDialog').close()">close</button></div>
+            <pre id="resultBody"></pre>
+        </dialog>
+
+        <script>
+            let selectedIds = new Set();
+
+            function syncSelection() {{
+                selectedIds = new Set(Array.from(document.querySelectorAll('.artifact-select:checked')).map((item) => item.value));
+                document.getElementById('selectedCount').textContent = String(selectedIds.size);
+            }}
+
+            function selectedArray() {{
+                return Array.from(selectedIds);
+            }}
+
+            async function requestJson(url, payload, method = 'POST') {{
+                const response = await fetch(url, {{
+                    method,
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify(payload),
+                }});
+                if (!response.ok) {{
+                    throw new Error(await response.text());
+                }}
+                return response;
+            }}
+
+            function providerPayload() {{
+                return {{
+                    name: document.getElementById('providerName').value,
+                    kind: document.getElementById('providerKind').value,
+                    base_url: document.getElementById('providerBaseUrl').value,
+                    api_key: document.getElementById('providerApiKey').value,
+                    model: document.getElementById('providerModel').value,
+                    monthly_token_limit: Number(document.getElementById('providerTokenLimit').value || 0),
+                    monthly_budget_usd: Number(document.getElementById('providerBudget').value || 0),
+                    input_price_per_1m: Number(document.getElementById('providerInputPrice').value || 0),
+                    output_price_per_1m: Number(document.getElementById('providerOutputPrice').value || 0),
+                }};
+            }}
+
+            async function saveProvider(reload = true) {{
+                await requestJson('/api/provider/select', providerPayload());
+                if (reload) window.location.reload();
+            }}
+
+            async function loadModels() {{
+                await saveProvider(false);
+                const response = await fetch('/api/provider/models');
+                if (!response.ok) {{
+                    alert('Could not load models');
+                    return;
+                }}
+                const data = await response.json();
+                const select = document.getElementById('providerModel');
+                select.innerHTML = '';
+                (data.items || []).forEach((model) => {{
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    select.appendChild(option);
+                }});
+                if (!select.value && select.options.length) {{
+                    select.value = select.options[0].value;
+                }}
+            }}
+
+            async function addSource() {{
+                const payload = {{
+                    name: document.getElementById('newSourceName').value,
+                    kind: document.getElementById('newSourceKind').value,
+                    url: document.getElementById('newSourceUrl').value,
+                    repo: document.getElementById('newSourceRepo').value,
+                    branch: document.getElementById('newSourceBranch').value,
+                    recommended_interval_seconds: Number(document.getElementById('newSourceInterval').value || 3600),
+                    cadence_reason: document.getElementById('newSourceReason').value,
+                    enabled: document.getElementById('newSourceEnabled').checked,
+                }};
+                await requestJson('/api/sources', payload);
+                window.location.reload();
+            }}
+
+            async function saveSourceInterval(sourceId) {{
+                const input = document.querySelector(`[data-source-interval="${{sourceId}}"]`);
+                const payload = {{ manual_interval_seconds: Number(input.value || 0) }};
+                await requestJson(`/api/sources/${{sourceId}}`, payload, 'PATCH');
+                window.location.reload();
+            }}
+
+            async function toggleSourceEnabled(sourceId, enabled) {{
+                await requestJson(`/api/sources/${{sourceId}}`, {{ enabled }}, 'PATCH');
+                window.location.reload();
+            }}
+
+            async function toggleSourcePaused(sourceId, paused) {{
+                await requestJson(`/api/sources/${{sourceId}}`, {{ paused: !paused }}, 'PATCH');
+                window.location.reload();
+            }}
+
+            async function deleteSource(sourceId) {{
+                if (!confirm('Delete this source?')) return;
+                const response = await fetch(`/api/sources/${{sourceId}}`, {{ method: 'DELETE' }});
+                if (!response.ok) {{
+                    alert('Delete failed');
+                    return;
+                }}
+                window.location.reload();
+            }}
+
+            async function exportSelected(format) {{
+                const response = await requestJson('/api/export', {{ format, ids: selectedArray() }});
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = format === 'json' ? 'promptops-export.json' : 'promptops-export.md';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            }}
+
+            function openPublishingStudio() {{
+                const first = selectedArray()[0] || '';
+                window.location.href = first ? `/studio?artifact_id=${{encodeURIComponent(first)}}` : '/studio';
+            }}
+
+            function showResult(title, value) {{
+                document.getElementById('resultTitle').textContent = title;
+                document.getElementById('resultBody').textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+                document.getElementById('resultDialog').showModal();
+            }}
+
+            async function previewCanvas() {{
+                const response = await requestJson('/api/canvas/preview', {{ ids: selectedArray() }});
+                const data = await response.json();
+                showResult('Canvas preview', data.canvas || data);
+            }}
+
+            async function downloadCanvas() {{
+                const response = await requestJson('/api/canvas/archive', {{ ids: selectedArray() }});
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'canvas.zip';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            }}
+
+            async function runAction(action) {{
+                const response = await requestJson('/api/ai/action', {{ action, ids: selectedArray() }});
+                const data = await response.json();
+                showResult(action, data.result);
+            }}
+
+            document.querySelectorAll('.artifact-select').forEach((checkbox) => {{
+                checkbox.addEventListener('change', syncSelection);
+            }});
+            syncSelection();
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=page)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    cfg = load_config()
+    app.state.config = cfg
+    app.state.redis = aioredis.Redis(host=cfg.redis_host, port=cfg.redis_port, decode_responses=True)
+    app.state.http_client = AsyncClient()
+    app.state.background_tasks = []
+    app.state.session_id = secrets.token_hex(8)
+    app.state.vector_ready = False
+    app.state.vector_status = "initializing"
+    app.state.source_status = {}
+    app.state.provider_state = default_provider_state(cfg)
+    app.state.source_catalog = default_source_catalog(cfg)
+    app.state.telethon_client = None
+    await app.state.redis.ping()
+
+    try:
+        if not await app.state.redis.exists(SOURCE_CATALOG_KEY):
+            await save_source_catalog(app.state.source_catalog)
+        app.state.provider_state = await load_provider_state()
+        app.state.source_catalog = await load_source_catalog()
+    except Exception as exc:
+        logging.warning("Seed state failed: %s", exc)
+
+    if cfg.qdrant_url:
+        try:
+            app.state.qdrant = QdrantClient(url=cfg.qdrant_url, api_key=cfg.qdrant_api_key or None, timeout=10.0)
+            await ensure_qdrant_collection()
+        except Exception as exc:
+            logging.warning("Qdrant unavailable: %s", exc)
+            app.state.qdrant = None
+            app.state.vector_ready = False
+            app.state.vector_status = "offline"
+    else:
+        app.state.qdrant = None
+        app.state.vector_status = "disabled"
+
+    for source in app.state.source_catalog:
+        app.state.source_status[source["id"]] = {
+            "state": source.get("state", "idle"),
+            "detail": source.get("detail", "waiting"),
+            "updated_at": source.get("updated_at", iso_now()),
+        }
+
+    configure_publishing(app, load_selected_records, record_usage)
+    app.state.background_tasks.append(asyncio.create_task(reindex_recent_artifacts()))
+    app.state.background_tasks.append(asyncio.create_task(publishing_scheduler_loop()))
+    app.state.background_tasks.append(asyncio.create_task(poll_sources_loop(app.state.http_client, app.state.redis)))
+    app.state.background_tasks.append(asyncio.create_task(vector_watchdog_loop()))
+    if cfg.has_telethon:
+        app.state.background_tasks.append(asyncio.create_task(start_telethon_userbot(app.state.http_client, app.state.redis)))
+
+    try:
+        yield
+    finally:
+        for task in app.state.background_tasks:
+            task.cancel()
+        for task in app.state.background_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        await app.state.http_client.aclose()
+        await app.state.redis.aclose()
+
+
+app.router.lifespan_context = lifespan
+
+
+def main() -> None:
+    uvicorn.run("prompt_ops_app:app", host="0.0.0.0", port=8000, log_level="info")
+
+
+if __name__ == "__main__":
+    main()
