@@ -25,7 +25,7 @@ def test_studio_channel_button_and_lite_visibility(authed_page: Page):
     page.locator("#channelChat").fill("-1000000000999")
     page.locator("#channelTest").check()
     page.locator("#addChannel").click()
-    expect(page.get_by_text("E2E channel")).to_be_visible()
+    expect(page.get_by_role("heading", name="E2E channel")).to_be_visible()
     channel_id = page.evaluate("state.channels.find(x => x.name === 'E2E channel').id")
     page.request.delete(f"{BASE_URL}/api/channels/{channel_id}")
     page.goto(f"{BASE_URL}/lite")

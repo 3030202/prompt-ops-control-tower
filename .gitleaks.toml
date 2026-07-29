@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Documented placeholders in the environment template"
+paths = ['''\.env\.example$''']
