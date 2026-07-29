@@ -15,7 +15,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements-dev.txt
       - run: python -m py_compile prompt_ops_app.py publishing_studio.py osint_perplexity_grok_radar.py
-      - run: pytest -q tests/test_publishing.py tests/test_sources.py
+      - run: PYTHONPATH=. pytest -q tests/test_publishing.py tests/test_sources.py
       - run: cp .env.example .env && docker compose config
   docker:
     runs-on: ubuntu-latest

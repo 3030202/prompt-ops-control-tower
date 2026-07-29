@@ -77,7 +77,7 @@ Live отправляет короткий flash. Длинные материа�
 
 ```bash
 python -m py_compile prompt_ops_app.py publishing_studio.py
-pytest -q tests/test_publishing.py tests/test_sources.py
+PYTHONPATH=. pytest -q tests/test_publishing.py tests/test_sources.py
 docker compose config
 ```
 
