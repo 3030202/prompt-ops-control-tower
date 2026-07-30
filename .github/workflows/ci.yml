@@ -14,8 +14,8 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements-dev.txt
-      - run: python -m py_compile prompt_ops_app.py publishing_studio.py osint_perplexity_grok_radar.py
-      - run: PYTHONPATH=. pytest -q tests/test_publishing.py tests/test_sources.py
+      - run: python -m py_compile prompt_ops_app.py prompt_ops_mcp.py publishing_studio.py osint_perplexity_grok_radar.py
+      - run: PYTHONPATH=. pytest -q tests/test_publishing.py tests/test_sources.py tests/test_mcp.py
       - run: cp .env.example .env && docker compose config
   docker:
     runs-on: ubuntu-latest
@@ -45,6 +45,7 @@ jobs:
           docker compose logs
           exit 1
       - run: pip install -r requirements-dev.txt
+      - run: pytest tests/test_mcp_http.py -v
       - run: playwright install --with-deps chromium
       - run: pytest tests/test_e2e.py --browser chromium -v
       - if: always()

@@ -16,6 +16,7 @@
 - style profiles по последним 50 сообщениям Telegram-канала;
 - публичная read-only Lite-витрина только для явно опубликованных материалов;
 - отдельный Dense Prompt Register: полноэкранный web-TUI, независимые цветные регистры, практический разбор механики, оценки токенов и экспорт MD/JSON.
+- remote MCP Streamable HTTP для безопасного поиска, чтения, semantic search и экспорта публичных промптов.
 
 ## Быстрый старт
 
@@ -31,6 +32,7 @@ docker compose up -d --build
 - Publishing Studio: `http://localhost:8000/studio`
 - Public Lite: `http://localhost:8000/lite`
 - Prompt Register: `http://localhost:8000/prompts`
+- MCP endpoint: `http://localhost:8000/mcp`
 - Qdrant: `http://localhost:6333/dashboard`
 
 Dashboard и Studio используют HTTP Basic из `DASHBOARD_USER` / `DASHBOARD_PASS`.
@@ -38,6 +40,19 @@ Dashboard и Studio используют HTTP Basic из `DASHBOARD_USER` / `DAS
 ## Prompt-only поверхность
 
 `8.0x101.lol` предназначен только для каталога промптов. На этом hostname корень переписывается в `/prompts`; публичны `/health`, чтение `/api/prompts`, detail `/api/prompts/{serial}` и экспорт `/api/prompts/export`. AI-анализ `/api/prompts/analyze` требует HTTP Basic, а dashboard, Studio, Lite и остальные административные API возвращают `404`.
+
+## MCP
+
+Remote MCP доступен по `https://8.0x101.lol/mcp` и использует современный Streamable HTTP transport. Запросы требуют отдельный заголовок `Authorization: Bearer <MCP_API_KEY>`.
+
+MCP предоставляет read-only tools:
+
+- `list_prompts` — компактный поиск, AND-фильтр тегов и пагинация;
+- `get_prompt` — полная allowlisted-карточка по serial;
+- `semantic_search_prompts` — поиск по смыслу через Qdrant;
+- `export_prompts` — экспорт выбранных serial в MD/JSON.
+
+Перед запуском задайте длинный случайный `MCP_API_KEY`; при пустом ключе endpoint fail-closed возвращает `503`. Подключение клиента и примеры запросов описаны в [docs/MCP_USER_GUIDE.md](docs/MCP_USER_GUIDE.md), первичный production rollout и ротация токена — в [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 Публичная модель содержит только allowlisted-поля: серийный номер, название, тело промпта, человеческое описание операции, объяснение механики, структуру, покрытие, ожидаемый результат, сложность освоения, приблизительные диапазоны входных/выходных токенов, 3–5 английских тегов, оценки, пометки и замечания. Блоков `references` нет. Raw-материалы, пути, source metadata, session ID и приватные workspace/Telegram-источники не экспортируются. Список prompt-only host задаётся через `PROMPT_ONLY_HOSTS`.
 
@@ -99,8 +114,8 @@ Live отправляет короткий flash. Длинные материа�
 ## Проверка
 
 ```bash
-python -m py_compile prompt_ops_app.py publishing_studio.py
-PYTHONPATH=. pytest -q tests/test_publishing.py tests/test_sources.py
+python -m py_compile prompt_ops_app.py prompt_ops_mcp.py publishing_studio.py
+PYTHONPATH=. pytest -q tests/test_publishing.py tests/test_sources.py tests/test_mcp.py
 docker compose config
 ```
 

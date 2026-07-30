@@ -36,6 +36,7 @@ from publishing_studio import (
     scheduler_loop as publishing_scheduler_loop,
     router as publishing_router,
 )
+from prompt_ops_mcp import PromptOpsMCPBackend, configure_mcp, mcp, mcp_http_app
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,7 +64,8 @@ async def prompt_hostname_router(request: Request, call_next: Any) -> Response:
             public_get = request.method == "GET" and (path == "/health" or path == "/api/prompts" or re.fullmatch(r"/api/prompts/P-\d{6}", path))
             public_export = request.method == "POST" and path == "/api/prompts/export"
             protected_analysis = request.method == "POST" and path == "/api/prompts/analyze"
-            if not (public_get or public_export or protected_analysis):
+            mcp_request = path == "/mcp" or path.startswith("/mcp/")
+            if not (public_get or public_export or protected_analysis or mcp_request):
                 return JSONResponse({"detail": "Prompt-only surface"}, status_code=404)
     return await call_next(request)
 
@@ -2921,7 +2923,10 @@ async def load_selected_records(ids: list[str]) -> list[dict[str, Any]]:
 async def health() -> JSONResponse:
     redis_client: aioredis.Redis = app.state.redis
     await redis_client.ping()
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({
+        "status": "ok",
+        "mcp": "configured" if os.getenv("MCP_API_KEY", "").strip() else "disabled",
+    })
 
 
 @app.get("/metrics")
@@ -3440,6 +3445,122 @@ async def api_prompt_analyze(payload: dict[str, Any] = Body(...), username: str 
     })
 
 
+def mcp_tags_match(prompt: dict[str, Any], tags: list[str]) -> bool:
+    wanted = {str(tag).strip().lower() for tag in tags if str(tag).strip()}
+    available = {str(tag).strip().lower() for tag in prompt.get("tags", [])}
+    return not wanted or wanted.issubset(available)
+
+
+def mcp_types_match(prompt: dict[str, Any], prompt_types: list[str]) -> bool:
+    wanted = {str(value).strip().lower() for value in prompt_types if str(value).strip()}
+    return not wanted or str(prompt.get("prompt_type", "Prompt")).lower() in wanted
+
+
+async def mcp_list_prompts_backend(
+    query: str,
+    tags: list[str],
+    prompt_types: list[str],
+    min_complexity: int,
+    max_complexity: int,
+    sort: str,
+    offset: int,
+    limit: int,
+) -> dict[str, Any]:
+    prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
+    filtered = filter_prompt_items(
+        prompts,
+        query=query,
+        min_complexity=min_complexity,
+        max_complexity=max_complexity,
+    )
+    filtered = [
+        prompt for prompt in filtered
+        if mcp_tags_match(prompt, tags) and mcp_types_match(prompt, prompt_types)
+    ]
+    sort_name = {"complexity_desc": "complexity", "literacy_desc": "literacy"}.get(sort, sort)
+    ordered = sort_prompt_items(filtered, sort_name)
+    page = ordered[offset:offset + limit]
+    return {
+        "items": [compact_prompt_item(prompt) for prompt in page],
+        "count": len(page),
+        "total": len(ordered),
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+async def mcp_get_prompt_backend(serial: str) -> dict[str, Any]:
+    prompt = await load_prompt_by_serial(serial)
+    if not prompt:
+        raise ValueError(f"Prompt {serial} was not found")
+    return public_prompt_item(prompt)
+
+
+async def mcp_semantic_search_backend(
+    query: str,
+    tags: list[str],
+    prompt_types: list[str],
+    limit: int,
+) -> dict[str, Any]:
+    candidates = await qdrant_search(query, None, min(MAX_PROMPT_CATALOG, max(limit * 8, 80)))
+    candidates.sort(key=lambda item: float(item.get("search_score") or 0), reverse=True)
+    results = []
+    for candidate in candidates:
+        prompt_id = str(candidate.get("id", ""))
+        raw = await app.state.redis.hget(PROMPTS_HASH_KEY, prompt_id)
+        if not raw:
+            continue
+        prompt = json.loads(raw)
+        if not mcp_tags_match(prompt, tags) or not mcp_types_match(prompt, prompt_types):
+            continue
+        item = compact_prompt_item(prompt)
+        item["semantic_score"] = round(float(candidate.get("search_score") or 0), 6)
+        results.append(item)
+        if len(results) >= limit:
+            break
+    return {
+        "query": query,
+        "items": results,
+        "count": len(results),
+        "vector_status": getattr(app.state, "vector_status", "unknown"),
+    }
+
+
+async def mcp_export_prompts_backend(
+    serials: list[str],
+    format_name: str,
+    register_name: str,
+) -> dict[str, Any]:
+    prompts = await resolve_prompt_serials(serials, 50)
+    if not prompts:
+        raise ValueError("No existing prompt serials were supplied")
+    content, media_type = build_prompt_register_export(
+        [{
+            "id": "mcp",
+            "name": register_name,
+            "color": "#00ff66",
+            "prompts": prompts,
+        }],
+        format_name,
+    )
+    return {
+        "format": format_name,
+        "media_type": media_type,
+        "count": len(prompts),
+        "content": content,
+    }
+
+
+async def mcp_catalog_stats_backend() -> dict[str, Any]:
+    prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
+    return {
+        "total": len(prompts),
+        "facets": prompt_facets(prompts),
+        "vector_status": getattr(app.state, "vector_status", "unknown"),
+        "last_sync_at": await app.state.redis.get(LAST_SYNC_KEY),
+    }
+
+
 @app.get("/prompts", response_class=HTMLResponse)
 async def prompt_catalog_page() -> HTMLResponse:
     return HTMLResponse((Path(__file__).resolve().parent / "prompts" / "index.html").read_text(encoding="utf-8"))
@@ -3540,6 +3661,13 @@ async def lifespan(_: FastAPI):
         }
 
     configure_publishing(app, load_selected_records, record_usage)
+    configure_mcp(PromptOpsMCPBackend(
+        list_prompts=mcp_list_prompts_backend,
+        get_prompt=mcp_get_prompt_backend,
+        semantic_search=mcp_semantic_search_backend,
+        export_prompts=mcp_export_prompts_backend,
+        catalog_stats=mcp_catalog_stats_backend,
+    ))
     app.state.background_tasks.append(asyncio.create_task(reindex_recent_artifacts()))
     app.state.background_tasks.append(asyncio.create_task(backfill_prompt_catalog()))
     app.state.background_tasks.append(asyncio.create_task(publishing_scheduler_loop()))
@@ -3548,18 +3676,20 @@ async def lifespan(_: FastAPI):
     if cfg.has_telethon:
         app.state.background_tasks.append(asyncio.create_task(start_telethon_userbot(app.state.http_client, app.state.redis)))
 
-    try:
-        yield
-    finally:
-        for task in app.state.background_tasks:
-            task.cancel()
-        for task in app.state.background_tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        await app.state.http_client.aclose()
-        await app.state.redis.aclose()
+    async with mcp.session_manager.run():
+        try:
+            yield
+        finally:
+            for task in app.state.background_tasks:
+                task.cancel()
+            for task in app.state.background_tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            await app.state.http_client.aclose()
+            await app.state.redis.aclose()
 
 
+app.mount("/", mcp_http_app)
 app.router.lifespan_context = lifespan
 
 
