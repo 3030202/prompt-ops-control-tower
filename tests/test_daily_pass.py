@@ -42,7 +42,7 @@ class TestDailyPass(unittest.TestCase):
 
     def test_get_daily_pin_fallback_and_custom(self):
         async def run_test():
-            fake_redis = MagicMock()
+            fake_redis = AsyncMock()
             fake_redis.get = AsyncMock(return_value=None)
 
             # Default fallback
@@ -97,10 +97,11 @@ class TestDailyPass(unittest.TestCase):
     def test_broadcast_daily_pin_announcement(self):
         async def run_test():
             fake_app = MagicMock()
-            fake_redis = MagicMock()
+            fake_redis = AsyncMock()
             fake_redis.get = AsyncMock(return_value=None)
             fake_redis.zcard = AsyncMock(return_value=42)
             fake_redis.zcount = AsyncMock(return_value=5)
+            fake_redis.ping = AsyncMock(return_value=True)
             fake_redis.hvals = AsyncMock(
                 return_value=['{"id": "ch_1", "username": "test_ch", "chat_id": 123, "enabled": true}']
             )
@@ -110,14 +111,19 @@ class TestDailyPass(unittest.TestCase):
             fake_app.state.redis = fake_redis
             fake_app.state.config.telegram_bot_token = "fake-bot-token"
 
+            orig_publishing_app = publishing_studio._app
+            orig_daily_app = daily_pass._app
             publishing_studio._app = fake_app
             daily_pass._app = fake_app
-
-            with patch("publishing_studio.send", AsyncMock(return_value={"message_id": 1001})):
-                result = await publishing_studio.broadcast_daily_pin_announcement(force=True)
-                self.assertTrue(result["success"])
-                self.assertEqual(result["total_channels"], 1)
-                self.assertEqual(result["results"][0]["status"], "sent")
+            try:
+                with patch("publishing_studio.send", AsyncMock(return_value={"message_id": 1001})):
+                    result = await publishing_studio.broadcast_daily_pin_announcement(force=True)
+                    self.assertTrue(result["success"])
+                    self.assertEqual(result["total_channels"], 1)
+                    self.assertEqual(result["results"][0]["status"], "sent")
+            finally:
+                publishing_studio._app = orig_publishing_app
+                daily_pass._app = orig_daily_app
 
         asyncio.run(run_test())
 

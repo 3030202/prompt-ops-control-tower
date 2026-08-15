@@ -59,8 +59,22 @@ def estimate_tokens(text: str) -> int:
     return max(1, (len(text) + 3) // 4) if text else 0
 
 
+def get_app() -> Any:
+    global _app
+    if _app is not None:
+        return _app
+    try:
+        import prompt_ops_app
+        return prompt_ops_app.app
+    except Exception:
+        return None
+
+
 def authenticate(credentials: HTTPBasicCredentials = Depends(security)) -> str:
-    cfg = _app.state.config
+    app_instance = get_app()
+    if not app_instance or not hasattr(app_instance.state, "config"):
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Config uninitialized")
+    cfg = app_instance.state.config
     valid = secrets.compare_digest(credentials.username, cfg.dashboard_user) and secrets.compare_digest(credentials.password, cfg.dashboard_pass)
     if not valid:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный логин или пароль", headers={"WWW-Authenticate": "Basic"})

@@ -5,28 +5,41 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="prompt-ops-api-base" content="">
 <title>Prompt Ops Lite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=Outfit:wght@600;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --paper:#f5f3ec;--ink:#141412;--line:#c4c0b4;--line2:#dedbd0;--acid:#c8ec26;
-  --blue:#0d5e77;--muted:#66655d;--card-bg:#fbfaf6;
+  --paper:#f7f5ee;--ink:#121310;--line:#bbb7a9;--line2:#dedbd0;--acid:#c8ec26;
+  --blue:#0d5e77;--muted:#5c5b53;--card-bg:#ffffff;
   --sat:env(safe-area-inset-top, 0px);--sab:env(safe-area-inset-bottom, 0px);
   --sal:env(safe-area-inset-left, 0px);--sar:env(safe-area-inset-right, 0px);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{
   margin:0;background:var(--paper);color:var(--ink);
-  font-family:Georgia,"Times New Roman",serif;
+  font-family:"Newsreader",Georgia,serif;
   padding:var(--sat) var(--sar) var(--sab) var(--sal);
   min-height:100vh;min-height:100dvh;
 }
-.shell{max-width:1180px;margin:auto;padding:16px}
-.nav-strip{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-family:monospace;font-size:11px;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line2)}
-.nav-strip a{color:var(--blue);text-decoration:none;margin-left:12px}
+.shell{max-width:1200px;margin:auto;padding:20px}
+.nav-strip{
+  display:flex;justify-content:space-between;align-items:center;padding:8px 0;
+  font-family:"JetBrains Mono",monospace;font-size:11px;text-transform:uppercase;
+  color:var(--muted);border-bottom:1px solid var(--line2);letter-spacing:.05em;
+}
+.nav-strip a{color:var(--blue);text-decoration:none;margin-left:14px;font-weight:600}
 .nav-strip a:hover{text-decoration:underline}
 
-.mast{border-top:6px solid var(--ink);border-bottom:2px solid var(--ink);padding:14px 0 18px;display:flex;justify-content:space-between;gap:20px;align-items:flex-end}
-.mast h1{font-family:Impact,"Arial Black","Arial Narrow",sans-serif;text-transform:uppercase;font-size:clamp(36px,8vw,92px);line-height:.82;margin:0;letter-spacing:-.03em}
-.mast p{max-width:36ch;margin:0;color:var(--muted);font-size:14px;line-height:1.4}
+.mast{
+  border-top:6px solid var(--ink);border-bottom:2px solid var(--ink);
+  padding:18px 0 22px;display:flex;justify-content:space-between;gap:24px;align-items:flex-end;
+}
+.mast h1{
+  font-family:"Outfit",sans-serif;font-weight:900;text-transform:uppercase;
+  font-size:clamp(38px,8vw,86px);line-height:.85;margin:0;letter-spacing:-.03em;
+}
+.mast p{max-width:38ch;margin:0;color:var(--muted);font-family:"Inter",sans-serif;font-size:14px;line-height:1.45}
 
 .tools{display:grid;grid-template-columns:1fr 240px 120px;gap:8px;margin:18px 0}
 input,select,button{padding:11px 14px;border:1px solid var(--ink);background:transparent;color:var(--ink);font-family:inherit;font-size:14px}
@@ -149,7 +162,7 @@ article p{line-height:1.55;font-size:14px;margin:0 0 12px;color:#282824}
     </div>
     <div class="dp-error" id="dpError"></div>
     <div class="dp-actions">
-      <a class="dp-tg-btn" id="dpTgLink" href="https://t.me/prompt_ops" target="_blank" rel="noopener">
+      <a class="dp-tg-btn" id="dpTgLink" href="https://t.me/desp0tat" target="_blank" rel="noopener">
         <span>✈️ Взять код на сегодня в Telegram</span>
       </a>
     </div>

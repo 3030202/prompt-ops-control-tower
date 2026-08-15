@@ -25,9 +25,9 @@ flowchart LR
 ```
 
 ## Trust boundaries
-
+ 
 - Administrative APIs and `/studio` use HTTP Basic authentication.
-- Prompt-only host middleware exposes only `/prompts`, `/api/prompts` and `/health`; workspace and Telegram records are rejected before projection.
+- Prompt-only hosts (`8.0x101.lol`, `08.0x101.lol`) expose `/prompts`, `/lite`, `/health`, `/api/prompts/*`, `/api/daily-pass/*`, `/api/public/*`, `/mcp` (Bearer token) and `/studio` (HTTP Basic Auth); internal Radar/OSINT dashboard and raw ingestion APIs are rejected with `404 Prompt-only surface`.
 - `/mcp` requires a separate Bearer token and exposes only read-only tools backed by the public prompt allowlist.
 - MCP transport validates `Host` and `Origin` against explicit production allowlists to prevent DNS rebinding.
 - `/api/public/*` and `/lite` are intentionally public and return an allowlisted schema only.

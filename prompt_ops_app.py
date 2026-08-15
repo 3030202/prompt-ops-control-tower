@@ -59,8 +59,13 @@ app.include_router(daily_pass_router)
 
 @app.middleware("http")
 async def prompt_hostname_router(request: Request, call_next: Any) -> Response:
-    prompt_hosts = {host.strip().lower() for host in os.getenv("PROMPT_ONLY_HOSTS", "8.0x101.lol").split(",") if host.strip()}
-    hostname = (request.url.hostname or "").lower()
+    prompt_hosts = {
+        host.strip().lower()
+        for host in os.getenv("PROMPT_ONLY_HOSTS", "8.0x101.lol,08.0x101.lol").split(",")
+        if host.strip()
+    }
+    raw_host = request.headers.get("host") or request.url.hostname or ""
+    hostname = raw_host.split(":")[0].strip().lower()
     if hostname in prompt_hosts:
         path = request.url.path
         if path == "/":
@@ -70,6 +75,9 @@ async def prompt_hostname_router(request: Request, call_next: Any) -> Response:
             public_get = request.method == "GET" and (
                 path == "/health"
                 or path == "/api/prompts"
+                or path == "/prompts"
+                or path == "/lite"
+                or path.startswith("/api/public/")
                 or re.fullmatch(r"/api/prompts/P-\d{6}", path)
                 or path.startswith("/api/daily-pass/")
             )
@@ -77,7 +85,25 @@ async def prompt_hostname_router(request: Request, call_next: Any) -> Response:
             public_daily_pass = request.method == "POST" and path.startswith("/api/daily-pass/")
             protected_analysis = request.method == "POST" and path == "/api/prompts/analyze"
             mcp_request = path == "/mcp" or path.startswith("/mcp/")
-            if not (public_get or public_export or public_daily_pass or protected_analysis or mcp_request):
+
+            # Allow Publishing Studio & related management APIs (all guarded by HTTP Basic Auth)
+            studio_request = (
+                path == "/studio"
+                or path.startswith("/api/channels")
+                or path.startswith("/api/styles")
+                or path.startswith("/api/post-drafts")
+                or path.startswith("/api/publishing-rules")
+                or path.startswith("/api/publishing/")
+            )
+
+            if not (
+                public_get
+                or public_export
+                or public_daily_pass
+                or protected_analysis
+                or mcp_request
+                or studio_request
+            ):
                 return JSONResponse({"detail": "Prompt-only surface"}, status_code=404)
     return await call_next(request)
 

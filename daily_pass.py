@@ -15,7 +15,7 @@ security = HTTPBasic()
 MOSCOW = ZoneInfo("Europe/Moscow")
 
 DAILY_PASS_SECRET = os.getenv("DAILY_PASS_SECRET", "promptops-control-tower-daily-pin-secret-key-2026")
-TELEGRAM_PUBLIC_CHANNEL = os.getenv("TELEGRAM_PUBLIC_CHANNEL", "https://t.me/prompt_ops")
+TELEGRAM_PUBLIC_CHANNEL = os.getenv("TELEGRAM_PUBLIC_CHANNEL", "https://t.me/desp0tat")
 CUSTOM_PIN_KEY_PREFIX = "promptops:daily_pin:custom"
 RATE_LIMIT_PREFIX = "promptops:daily_pin:rate"
 

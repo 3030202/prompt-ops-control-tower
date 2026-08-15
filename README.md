@@ -37,9 +37,14 @@ docker compose up -d --build
 
 Dashboard и Studio используют HTTP Basic из `DASHBOARD_USER` / `DASHBOARD_PASS`.
 
-## Prompt-only поверхность
+## Сетевая поверхность и маршрутизация (8.0x101.lol / 08.0x101.lol)
 
-`8.0x101.lol` предназначен только для каталога промптов. На этом hostname корень переписывается в `/prompts`; публичны `/health`, чтение `/api/prompts`, detail `/api/prompts/{serial}` и экспорт `/api/prompts/export`. AI-анализ `/api/prompts/analyze` требует HTTP Basic, а dashboard, Studio, Lite и остальные административные API возвращают `404`.
+Публичные домены `8.0x101.lol` и `08.0x101.lol` обслуживают изолированный внешний контур:
+- Корень `/` автоматически переписывается в `/prompts` (плотный веб-TUI каталог промптов);
+- Публично доступны: `/health`, витрина `/lite`, каталог `/prompts`, чтение карточек `/api/prompts`, `/api/prompts/{serial}`, экспорт `/api/prompts/export`, проверка `/api/daily-pass/*` и лента `/api/public/feed`;
+- **Remote MCP**: `/mcp` защищён Bearer-токеном (`MCP_API_KEY`) и работает по Streamable HTTP transport;
+- **Publishing Studio**: интерфейс `/studio` и управляющие API (`/api/channels`, `/api/styles`, `/api/post-drafts`, `/api/publishing-rules`, `/api/publishing/*`, `/api/prompts/analyze`) защищены **HTTP Basic Auth** (`DASHBOARD_USER` / `DASHBOARD_PASS`);
+- Внутренний Dashboard радара (`/`) и административные API сбора источников (`/api/artifacts`, `/api/sources/*`, `/api/ai/*`) возвращают `404 Prompt-only surface`, изолируя чувствительный контур. Список хостов задаётся через `PROMPT_ONLY_HOSTS`.
 
 ## MCP
 
