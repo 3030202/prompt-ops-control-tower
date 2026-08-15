@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from daily_pass import get_daily_pin, get_today_date_str
 
 router = APIRouter()
 security = HTTPBasic()
@@ -295,7 +296,15 @@ async def publish_draft(draft: dict[str, Any], kind: str = "manual") -> dict[str
     if kind == "scheduled":
         if not await rate_allowed(channel["id"], "scheduled") or await _app.state.redis.exists(f"{RATE_PREFIX}:cooldown:{channel['id']}"):
             raise RuntimeError("Scheduled limit or cooldown reached")
-    result = await send(channel, html.escape(draft.get("text", ""), quote=False), f"draft:{draft['id']}:{channel['id']}", kind, draft.get("artifact_markdown", ""))
+    
+    # Expand daily PIN & date macros
+    redis = _app.state.redis if _app else None
+    daily_pin = await get_daily_pin(redis)
+    today_date = get_today_date_str()
+    text = (draft.get("text", "") or "").replace("{daily_pin}", daily_pin).replace("{today_pin}", daily_pin).replace("{daily_date}", today_date)
+    draft["text"] = text
+
+    result = await send(channel, html.escape(text, quote=False), f"draft:{draft['id']}:{channel['id']}", kind, draft.get("artifact_markdown", ""))
     draft.update({"status": "published", "telegram_message_id": result.get("message_id"), "telegram_link": message_link(channel, result.get("message_id")), "published_at": iso_now(), "updated_at": iso_now()})
     draft["history"].append({"at": iso_now(), "action": "published", "kind": kind})
     await save_item(DRAFTS_KEY, draft)
@@ -389,6 +398,66 @@ async def sync_style_profile(style: dict[str, Any]) -> dict[str, Any]:
     return style
 
 
+async def broadcast_daily_pin_announcement(force: bool = False) -> dict[str, Any]:
+    """Broadcasts today's Daily PIN to all active public channels in Studio."""
+    redis = _app.state.redis if _app else None
+    today_date = get_today_date_str()
+    daily_pin = await get_daily_pin(redis, today_date)
+
+    total_prompts = 0
+    recent_24h = 0
+    if redis:
+        try:
+            total_prompts = await redis.zcard("promptops:prompts:order")
+            cutoff = utc_now().timestamp() - 86400
+            recent_24h = await redis.zcount("promptops:prompts:order", cutoff, "+inf")
+        except Exception:
+            pass
+
+    channels = await list_items(CHANNELS_KEY)
+    active_channels = [c for c in channels if c.get("enabled", True)]
+
+    if not active_channels:
+        return {
+            "success": False,
+            "message": "Нет активных каналов для публикации в Publishing Studio",
+            "date": today_date,
+            "pin": daily_pin,
+            "total_channels": 0,
+            "results": [],
+        }
+
+    stats_line = f"📊 В каталоге: <b>{total_prompts}</b> промптов" + (f" (<b>+{recent_24h}</b> за 24ч)" if recent_24h > 0 else "")
+    text = (
+        f"🔑 <b>DAILY PASS // КОД ДНЯ: <code>{daily_pin}</code></b>\n\n"
+        f"📅 Дата: <b>{today_date}</b> (MSK)\n"
+        f"{stats_line}\n\n"
+        f"Введите 4-значный код <code>{daily_pin}</code> в веб-интерфейсе для полного доступа к каталогу, "
+        f"экспорту и AI-аналитике.\n\n"
+        f"🌐 <b>TUI Каталог:</b> https://8.0x101.lol\n"
+        f"⚡ <b>Lite витрина:</b> https://8.0x101.lol/lite\n\n"
+        f"#DailyPass #PromptOps #AI"
+    )
+
+    results = []
+    for ch in active_channels:
+        idem = f"daily_pin:{today_date}:{ch['id']}" if not force else f"daily_pin:{today_date}:{ch['id']}:{secrets.token_hex(4)}"
+        try:
+            res = await send(ch, text, idem, "daily_pass_broadcast")
+            results.append({"channel_id": ch["id"], "username": ch.get("username"), "status": "sent", "message_id": res.get("message_id")})
+            await event("daily_pin_broadcast", channel_id=ch["id"], date=today_date, pin=daily_pin)
+        except Exception as exc:
+            results.append({"channel_id": ch["id"], "username": ch.get("username"), "status": "error", "error": str(exc)})
+
+    return {
+        "success": any(r.get("status") == "sent" for r in results),
+        "date": today_date,
+        "pin": daily_pin,
+        "total_channels": len(active_channels),
+        "results": results,
+    }
+
+
 async def scheduler_tick() -> None:
     now = utc_now()
     for draft_id in await _app.state.redis.zrangebyscore(SCHEDULE_KEY, 0, now.timestamp()):
@@ -401,6 +470,16 @@ async def scheduler_tick() -> None:
                 draft.update({"status": "review", "review_reason": str(exc)})
                 await save_item(DRAFTS_KEY, draft)
     local, slot = datetime.now(MOSCOW), datetime.now(MOSCOW).strftime("%H:%M")
+    
+    # 09:00 MSK Daily PIN broadcast
+    if slot == "09:00":
+        daily_broadcast_lock = f"promptops:publishing:daily_pin_broadcast:{local:%Y-%m-%d}"
+        if await _app.state.redis.set(daily_broadcast_lock, "1", nx=True, ex=93600):
+            try:
+                await broadcast_daily_pin_announcement(force=False)
+            except Exception as exc:
+                logging.error("Daily PIN broadcast failed: %s", exc)
+
     for rule in await list_items(RULES_KEY):
         if not rule.get("enabled") or not rule.get("scheduled_enabled") or slot not in rule.get("schedule_slots", []):
             continue
@@ -712,6 +791,13 @@ async def events(limit: int = 100, _: str = Depends(authenticate)) -> JSONRespon
                 item[key] = value
         items.append(item)
     return JSONResponse({"items": items})
+
+
+@router.post("/api/publishing/broadcast-daily-pin")
+async def api_broadcast_daily_pin(_: str = Depends(authenticate)) -> JSONResponse:
+    """Admin endpoint to broadcast today's Daily PIN to all active channels."""
+    result = await broadcast_daily_pin_announcement(force=True)
+    return JSONResponse(result)
 
 
 @router.get("/api/public/feed")

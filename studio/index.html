@@ -1,29 +1,428 @@
 <!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Prompt Ops Publishing Studio</title>
 <style>
-:root{--bg:#090a0b;--panel:#131519;--lift:#191c21;--line:#2b3037;--text:#f2efe6;--muted:#969da3;--acid:#d9ff43;--cyan:#5bd8ff;--red:#ff6b79}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Bahnschrift,"Aptos Narrow","Segoe UI",sans-serif;background-image:linear-gradient(#ffffff08 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px),radial-gradient(circle at 75% -10%,#5bd8ff1c,transparent 30%);background-size:28px 28px,28px 28px,auto}.shell{max-width:1600px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:24px;align-items:end;border-bottom:1px solid var(--line);padding:12px 0 20px}.eyebrow{color:var(--acid);text-transform:uppercase;letter-spacing:.18em;font-size:12px}.top h1{font-size:clamp(34px,5vw,68px);line-height:.88;margin:9px 0 0;text-transform:uppercase;max-width:12ch}.tabs{display:flex;gap:7px;flex-wrap:wrap}.btn,.tabs button{background:#1b1e23;color:var(--text);border:1px solid var(--line);padding:10px 13px;cursor:pointer;text-decoration:none}.btn:hover,.tabs button:hover{border-color:var(--cyan)}.tabs button.active,.btn.primary{background:var(--acid);color:#090a0b;border-color:var(--acid);font-weight:800}.grid{display:grid;grid-template-columns:380px 1fr;gap:14px;margin-top:16px}.panel{background:var(--panel);border:1px solid var(--line);padding:16px}.panel h2{margin:0 0 14px;font-size:20px}.panel h3{margin:0 0 8px}.list{display:grid;gap:9px}.card{border:1px solid var(--line);background:var(--lift);padding:14px}.meta{font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}.badge{padding:3px 6px;border:1px solid var(--line);color:var(--cyan)}.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.hidden{display:none!important}.status{position:fixed;right:18px;bottom:18px;background:var(--acid);color:#090a0b;padding:12px 16px;z-index:50;max-width:520px;font-weight:800}.status:empty{display:none}input,select,textarea{width:100%;background:#0d0f12;color:var(--text);border:1px solid var(--line);padding:10px;margin:5px 0;outline:none}input:focus,select:focus,textarea:focus{border-color:var(--cyan)}textarea{min-height:150px;resize:vertical}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.check{display:flex;gap:8px;align-items:center;color:var(--muted);margin:7px 0}.check input{width:auto;margin:0}.draft-text{min-height:190px}.empty{padding:30px;border:1px dashed var(--line);color:var(--muted);text-align:center}pre{white-space:pre-wrap;max-height:300px;overflow:auto;color:#cdd5d9}.danger{color:var(--red)}@media(max-width:950px){.grid{grid-template-columns:1fr}.top{display:block}.tabs{margin-top:18px}.row{grid-template-columns:1fr}}
+:root{
+  --bg:#090a0b;--panel:#131519;--lift:#191c21;--line:#2b3037;--text:#f2efe6;
+  --muted:#969da3;--acid:#d9ff43;--cyan:#5bd8ff;--red:#ff6b79;
+  --sat:env(safe-area-inset-top, 0px);--sab:env(safe-area-inset-bottom, 0px);
+  --sal:env(safe-area-inset-left, 0px);--sar:env(safe-area-inset-right, 0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:Bahnschrift,"Aptos Narrow","Segoe UI",system-ui,sans-serif;
+  background-image:linear-gradient(#ffffff08 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px),radial-gradient(circle at 75% -10%,#5bd8ff1c,transparent 30%);
+  background-size:28px 28px,28px 28px,auto;
+  padding:var(--sat) var(--sar) var(--sab) var(--sal);
+  min-height:100vh;min-height:100dvh;
+}
+.shell{max-width:1600px;margin:auto;padding:16px}
+.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;border-bottom:1px solid var(--line);padding:8px 0 16px}
+.eyebrow{color:var(--acid);text-transform:uppercase;letter-spacing:.18em;font-size:11px;font-weight:700}
+.top h1{font-size:clamp(28px,5vw,60px);line-height:.92;margin:6px 0 0;text-transform:uppercase;max-width:14ch;letter-spacing:-.02em}
+.tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:4px 0}
+.tabs::-webkit-scrollbar{display:none}
+.btn,.tabs button{background:#1b1e23;color:var(--text);border:1px solid var(--line);padding:9px 14px;cursor:pointer;text-decoration:none;font-weight:600;font-size:13px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;transition:border-color .15s,background .15s}
+.btn:hover,.tabs button:hover{border-color:var(--cyan)}
+.tabs button.active,.btn.primary{background:var(--acid);color:#090a0b;border-color:var(--acid);font-weight:800}
+.btn.danger{border-color:#5a2328;color:var(--red)}
+.btn.danger:hover{background:#301317;border-color:var(--red)}
+.grid{display:grid;grid-template-columns:380px 1fr;gap:14px;margin-top:16px}
+.panel{background:var(--panel);border:1px solid var(--line);padding:16px}
+.panel h2{margin:0 0 12px;font-size:18px;text-transform:uppercase;color:var(--text);letter-spacing:.03em}
+.panel h3{margin:0 0 8px;font-size:15px}
+.list{display:grid;gap:12px}
+.card{border:1px solid var(--line);background:var(--lift);padding:14px;position:relative}
+.meta{font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
+.badge{padding:3px 7px;border:1px solid var(--line);color:var(--cyan);font-size:11px;font-family:monospace;background:#0f1216}
+.actions{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;margin-top:12px}
+.actions .btn{padding:8px 10px;font-size:12px}
+.hidden{display:none!important}
+.status{position:fixed;right:18px;bottom:calc(18px + var(--sab));background:var(--acid);color:#090a0b;padding:12px 18px;z-index:50;max-width:520px;font-weight:800;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+.status:empty{display:none}
+input,select,textarea{width:100%;background:#0d0f12;color:var(--text);border:1px solid var(--line);padding:10px 12px;margin:5px 0;outline:none;font-family:inherit;font-size:14px}
+input:focus,select:focus,textarea:focus{border-color:var(--cyan)}
+textarea{min-height:140px;resize:vertical;font-family:inherit}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.check{display:flex;gap:8px;align-items:center;color:var(--muted);margin:8px 0;font-size:13px;cursor:pointer}
+.check input{width:auto;margin:0;cursor:pointer}
+.draft-text{min-height:180px;font-family:monospace;font-size:12px;line-height:1.45}
+.empty{padding:36px;border:1px dashed var(--line);color:var(--muted);text-align:center;font-size:14px}
+pre{white-space:pre-wrap;max-height:280px;overflow:auto;color:#cdd5d9;background:#0d0f12;padding:10px;border:1px solid var(--line);font-size:11px}
+.danger{color:var(--red)}
+
+@media(max-width:950px){
+  .grid{grid-template-columns:1fr}
+  .top{display:block;padding-bottom:12px}
+  .tabs{margin-top:12px;padding-bottom:6px}
+  .row{grid-template-columns:1fr}
+  input,select,textarea{font-size:16px!important}
+  .shell{padding:10px}
+}
+.daily-pin-bar{display:flex;align-items:center;gap:10px;background:#0d1117;border:1px solid #30363d;padding:6px 12px;margin:8px 0 0;font-family:monospace;font-size:12px;flex-wrap:wrap}
+.pin-digits{display:inline-flex;gap:4px;font-weight:800;color:var(--acid);background:#000;padding:2px 8px;border:1px solid var(--acid);letter-spacing:3px;font-size:14px}
+.pin-btn{background:#1b212c;border:1px solid #30363d;color:var(--cyan);padding:4px 8px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:700;transition:all .12s}
+.pin-btn:hover{background:#232d3d;border-color:var(--cyan)}
+.pin-sub{color:var(--muted);font-size:11px}
 </style>
 </head>
-<body><main class="shell"><header class="top"><div><div class="eyebrow">Prompt Ops / editorial control</div><h1>Publishing Studio</h1></div><nav class="tabs"><button data-tab="drafts" class="active">Drafts</button><button data-tab="channels">Channels</button><button data-tab="styles">Styles</button><button data-tab="rules">Rules</button><button data-tab="events">Events</button><a class="btn" href="/">Radar</a><a class="btn" href="/lite">Lite</a></nav></header><div id="status" class="status"></div>
-<section id="drafts" class="tab grid"><div class="panel"><h2>Generate draft</h2><input id="artifactId" placeholder="Artifact ID"><select id="postMode"><option value="step_by_step">Пошаговый разбор</option><option value="roast">Прожарка</option><option value="my_take" selected>Мои мысли</option><option value="artifact_from_source">Артефакт из источника</option><option value="full_editorial">Полный editorial</option></select><select id="artifactType"><option value="">Тип артефакта</option><option>prompt</option><option>skill</option><option>rule</option><option>checklist</option><option>pipeline</option></select><select id="draftChannel"></select><select id="draftStyle"></select><button class="btn primary" id="generateDraft">Generate</button><p class="meta">Длинный пост всегда создаётся как черновик. Публикация требует отдельного действия.</p></div><div class="panel"><h2>Draft queue</h2><div id="draftList" class="list"></div></div></section>
-<section id="channels" class="tab grid hidden"><div class="panel"><h2>Add destination</h2><input id="channelName" placeholder="Название"><input id="channelChat" placeholder="Chat ID, например -100..."><input id="channelUsername" placeholder="Публичный username без @"><input id="channelPurpose" value="publishing" placeholder="Назначение"><label class="check"><input id="channelTest" type="checkbox"> Тестовый канал</label><button class="btn primary" id="addChannel">Add channel</button></div><div class="panel"><h2>Destination registry</h2><div id="channelList" class="list"></div></div></section>
-<section id="styles" class="tab grid hidden"><div class="panel"><h2>Style profile</h2><input id="styleName" placeholder="Название профиля"><input id="styleSource" placeholder="@source_channel"><button class="btn primary" id="addStyle">Create profile</button><p class="meta">Sync читает последние 50 постов через Telethon. Повторный анализ одинакового набора не тратит токены.</p></div><div class="panel"><h2>Author voices</h2><div id="styleList" class="list"></div></div></section>
-<section id="rules" class="tab grid hidden"><div class="panel"><h2>Rule builder</h2><input id="ruleName" placeholder="Название"><select id="ruleChannel"></select><select id="ruleStyle"></select><div class="row"><input id="ruleRating" type="number" value="70" placeholder="Min rating"><input id="ruleComplexity" type="number" placeholder="Min complexity"></div><input id="ruleSources" placeholder="Sources через запятую"><input id="ruleTypes" placeholder="Types через запятую"><input id="ruleTags" placeholder="Tags any через запятую"><input id="ruleKeywords" placeholder="Keywords через запятую"><input id="ruleRegex" placeholder="Regex"><select id="ruleMode"><option>step_by_step</option><option>roast</option><option selected>my_take</option><option>artifact_from_source</option><option>full_editorial</option></select><select id="ruleArtifact"><option value="">Тип артефакта</option><option>prompt</option><option>skill</option><option>rule</option><option>checklist</option><option>pipeline</option></select><label class="check"><input id="ruleAi" type="checkbox"> AI predicate</label><input id="ruleAiPrompt" placeholder="AI-критерий"><label class="check"><input id="ruleLive" type="checkbox"> Live enabled</label><label class="check"><input id="ruleScheduled" type="checkbox"> Scheduled enabled</label><select id="ruleApproval"><option value="review">review</option><option value="auto">auto</option></select><input id="ruleSlots" value="10:00,15:00,20:00" placeholder="Slots"><button class="btn primary" id="addRule">Create disabled rule</button></div><div class="panel"><h2>Publishing rules</h2><div id="ruleList" class="list"></div></div></section>
-<section id="events" class="tab hidden"><div class="panel" style="margin-top:16px"><h2>Audit stream</h2><div id="eventList" class="list"></div></div></section>
+<body>
+<main class="shell">
+  <header class="top">
+    <div>
+      <div class="eyebrow">Prompt Ops / editorial control</div>
+      <h1>Publishing Studio</h1>
+      <div class="daily-pin-bar" id="dailyPinBar">
+        <span>🔑 <b>КОД ДНЯ:</b></span>
+        <span class="pin-digits" id="pinToday">----</span>
+        <button class="pin-btn" id="copyPinBtn" title="Скопировать PIN в буфер">📋 Код</button>
+        <button class="pin-btn" id="copyPostSnippetBtn" title="Скопировать готовый текст для поста">📋 Текст для поста</button>
+        <button class="pin-btn" id="broadcastPinBtn" title="Немедленно отправить пост с PIN-кодом дня во все каналы">📢 Опубликовать PIN дня сейчас</button>
+        <span class="pin-sub" id="pinTomorrow">Завтра: ----</span>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button data-tab="drafts" class="active">Drafts</button>
+      <button data-tab="channels">Channels</button>
+      <button data-tab="styles">Styles</button>
+      <button data-tab="rules">Rules</button>
+      <button data-tab="events">Events</button>
+      <a class="btn" href="/">Radar</a>
+      <a class="btn" href="/prompts">Prompts</a>
+      <a class="btn" href="/lite">Lite</a>
+    </nav>
+  </header>
+  <div id="status" class="status"></div>
+
+  <section id="drafts" class="tab grid">
+    <div class="panel">
+      <h2>Generate draft</h2>
+      <input id="artifactId" placeholder="Artifact ID">
+      <select id="postMode">
+        <option value="step_by_step">Пошаговый разбор</option>
+        <option value="roast">Прожарка</option>
+        <option value="my_take" selected>Мои мысли</option>
+        <option value="artifact_from_source">Артефакт из источника</option>
+        <option value="full_editorial">Полный editorial</option>
+      </select>
+      <select id="artifactType">
+        <option value="">Тип артефакта</option>
+        <option>prompt</option>
+        <option>skill</option>
+        <option>rule</option>
+        <option>checklist</option>
+        <option>pipeline</option>
+      </select>
+      <select id="draftChannel"></select>
+      <select id="draftStyle"></select>
+      <button class="btn primary" id="generateDraft" style="width:100%;margin-top:6px">Generate</button>
+      <p class="meta" style="margin-top:10px">Длинный пост всегда создаётся как черновик. Публикация требует отдельного действия.</p>
+    </div>
+    <div class="panel">
+      <h2>Draft queue</h2>
+      <div id="draftList" class="list"></div>
+    </div>
+  </section>
+
+  <section id="channels" class="tab grid hidden">
+    <div class="panel">
+      <h2>Add destination</h2>
+      <input id="channelName" placeholder="Название">
+      <input id="channelChat" placeholder="Chat ID, например -100...">
+      <input id="channelUsername" placeholder="Публичный username без @">
+      <input id="channelPurpose" value="publishing" placeholder="Назначение">
+      <label class="check"><input id="channelTest" type="checkbox"> Тестовый канал</label>
+      <button class="btn primary" id="addChannel" style="width:100%;margin-top:6px">Add channel</button>
+    </div>
+    <div class="panel">
+      <h2>Destination registry</h2>
+      <div id="channelList" class="list"></div>
+    </div>
+  </section>
+
+  <section id="styles" class="tab grid hidden">
+    <div class="panel">
+      <h2>Style profile</h2>
+      <input id="styleName" placeholder="Название профиля">
+      <input id="styleSource" placeholder="@source_channel">
+      <button class="btn primary" id="addStyle" style="width:100%;margin-top:6px">Create profile</button>
+      <p class="meta" style="margin-top:10px">Sync читает последние 50 постов через Telethon. Повторный анализ одинакового набора не тратит токены.</p>
+    </div>
+    <div class="panel">
+      <h2>Author voices</h2>
+      <div id="styleList" class="list"></div>
+    </div>
+  </section>
+
+  <section id="rules" class="tab grid hidden">
+    <div class="panel">
+      <h2>Rule builder</h2>
+      <input id="ruleName" placeholder="Название">
+      <select id="ruleChannel"></select>
+      <select id="ruleStyle"></select>
+      <div class="row">
+        <input id="ruleRating" type="number" value="70" placeholder="Min rating">
+        <input id="ruleComplexity" type="number" placeholder="Min complexity">
+      </div>
+      <input id="ruleSources" placeholder="Sources через запятую">
+      <input id="ruleTypes" placeholder="Types через запятую">
+      <input id="ruleTags" placeholder="Tags any через запятую">
+      <input id="ruleKeywords" placeholder="Keywords через запятую">
+      <input id="ruleRegex" placeholder="Regex">
+      <select id="ruleMode">
+        <option>step_by_step</option>
+        <option>roast</option>
+        <option selected>my_take</option>
+        <option>artifact_from_source</option>
+        <option>full_editorial</option>
+      </select>
+      <select id="ruleArtifact">
+        <option value="">Тип артефакта</option>
+        <option>prompt</option>
+        <option>skill</option>
+        <option>rule</option>
+        <option>checklist</option>
+        <option>pipeline</option>
+      </select>
+      <label class="check"><input id="ruleAi" type="checkbox"> AI predicate</label>
+      <input id="ruleAiPrompt" placeholder="AI-критерий">
+      <label class="check"><input id="ruleLive" type="checkbox"> Live enabled</label>
+      <label class="check"><input id="ruleScheduled" type="checkbox"> Scheduled enabled</label>
+      <select id="ruleApproval">
+        <option value="review">review</option>
+        <option value="auto">auto</option>
+      </select>
+      <input id="ruleSlots" value="10:00,15:00,20:00" placeholder="Slots">
+      <button class="btn primary" id="addRule" style="width:100%;margin-top:6px">Create disabled rule</button>
+    </div>
+    <div class="panel">
+      <h2>Publishing rules</h2>
+      <div id="ruleList" class="list"></div>
+    </div>
+  </section>
+
+  <section id="events" class="tab hidden">
+    <div class="panel" style="margin-top:16px">
+      <h2>Audit stream</h2>
+      <div id="eventList" class="list"></div>
+    </div>
+  </section>
 </main>
+
 <script>
-const $=id=>document.getElementById(id);const state={channels:[],styles:[],drafts:[],rules:[],events:[]};const csv=v=>v.split(',').map(x=>x.trim()).filter(Boolean);function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}async function api(url,options={}){const r=await fetch(url,{headers:{'Content-Type':'application/json'},...options});if(!r.ok)throw new Error(await r.text());return r.json()}function toast(text){$('status').textContent=text;setTimeout(()=>$('status').textContent='',4500)}function options(items,label){return `<option value="">${label}</option>`+items.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}
-function showTab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('hidden',x.id!==id));document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===id))}document.querySelectorAll('[data-tab]').forEach(x=>x.onclick=()=>showTab(x.dataset.tab));
-async function load(){const [c,s,d,r,e]=await Promise.all([api('/api/channels'),api('/api/styles'),api('/api/post-drafts'),api('/api/publishing-rules'),api('/api/publishing/events')]);Object.assign(state,{channels:c.items,styles:s.items,drafts:d.items,rules:r.items,events:e.items});['draftChannel','ruleChannel'].forEach(id=>$(id).innerHTML=options(state.channels,'Канал'));['draftStyle','ruleStyle'].forEach(id=>$(id).innerHTML=options(state.styles,'Стиль'));render()}
-function render(){ $('channelList').innerHTML=state.channels.length?state.channels.map(x=>`<article class="card"><h3>${esc(x.name)}</h3><div class="meta"><span class="badge">${esc(x.chat_id)}</span><span>${x.enabled?'enabled':'disabled'}</span><span>${x.test_mode?'test':'production'}</span></div><div class="actions"><button class="btn" onclick="testChannel('${x.id}')">Test</button><button class="btn danger" onclick="removeItem('/api/channels/${x.id}')">Delete</button></div></article>`).join(''):'<div class="empty">Каналы ещё не добавлены</div>';
-$('styleList').innerHTML=state.styles.length?state.styles.map(x=>`<article class="card"><h3>${esc(x.name)}</h3><div class="meta"><span>${esc(x.source_channel)}</span><span>${x.sample_count||0} samples</span><span>${esc(x.last_synced_at||'never')}</span></div><pre>${esc(JSON.stringify(x.style_card||{},null,2))}</pre><button class="btn" onclick="syncStyle('${x.id}')">Sync 50 posts</button></article>`).join(''):'<div class="empty">Профилей пока нет</div>';
-$('draftList').innerHTML=state.drafts.length?state.drafts.map(x=>`<article class="card"><h3>${esc(x.title)}</h3><div class="meta"><span class="badge">${esc(x.mode)}</span><span>${esc(x.status)}</span><span>${x.tokens?.total_tokens||0} tok</span><span>$${x.cost_usd||0}</span></div>${x.review_reason?`<p class="danger">${esc(x.review_reason)}</p>`:''}<textarea class="draft-text" id="text_${x.id}">${esc(x.text)}</textarea><label class="check"><input type="checkbox" id="public_${x.id}" ${x.public?'checked':''}> public in Lite</label><div class="actions"><button class="btn" onclick="saveDraft('${x.id}')">Save</button><button class="btn" onclick="regenerate('${x.id}')">Regenerate</button><button class="btn" onclick="approveDraft('${x.id}')">Approve</button><button class="btn primary" onclick="publishDraft('${x.id}')">Publish now</button><button class="btn" onclick="scheduleDraft('${x.id}')">Schedule</button><button class="btn danger" onclick="rejectDraft('${x.id}')">Reject</button></div></article>`).join(''):'<div class="empty">Черновиков пока нет</div>';
-$('ruleList').innerHTML=state.rules.length?state.rules.map(x=>`<article class="card"><h3>${esc(x.name)}</h3><div class="meta"><span class="badge">${x.enabled?'enabled':'disabled'}</span><span>live ${x.live_enabled}</span><span>scheduled ${x.scheduled_enabled}</span><span>${esc(x.approval_mode)}</span><span>rating ≥ ${x.min_rating}</span></div><div class="actions"><button class="btn" onclick="toggleRule('${x.id}',${!x.enabled})">${x.enabled?'Disable':'Enable'}</button><button class="btn danger" onclick="removeItem('/api/publishing-rules/${x.id}')">Delete</button></div></article>`).join(''):'<div class="empty">Правил пока нет</div>';
-$('eventList').innerHTML=state.events.length?state.events.map(x=>`<article class="card"><b>${esc(x.type)}</b><div class="meta">${esc(x.created_at)} / ${esc(x.id)}</div><pre>${esc(JSON.stringify(x,null,2))}</pre></article>`).join(''):'<div class="empty">Событий пока нет</div>'; }
-$('addChannel').onclick=async()=>{try{await api('/api/channels',{method:'POST',body:JSON.stringify({name:$('channelName').value,chat_id:$('channelChat').value,username:$('channelUsername').value,purpose:$('channelPurpose').value,test_mode:$('channelTest').checked})});await load()}catch(e){toast(e.message)}};$('addStyle').onclick=async()=>{try{await api('/api/styles',{method:'POST',body:JSON.stringify({name:$('styleName').value,source_channel:$('styleSource').value})});await load()}catch(e){toast(e.message)}};$('generateDraft').onclick=async()=>{try{await api('/api/post-drafts',{method:'POST',body:JSON.stringify({artifact_id:$('artifactId').value,mode:$('postMode').value,artifact_type:$('artifactType').value,channel_id:$('draftChannel').value,style_id:$('draftStyle').value})});await load()}catch(e){toast(e.message)}};$('addRule').onclick=async()=>{const p={name:$('ruleName').value,channel_id:$('ruleChannel').value,style_id:$('ruleStyle').value,min_rating:Number($('ruleRating').value),min_complexity:$('ruleComplexity').value?Number($('ruleComplexity').value):null,sources:csv($('ruleSources').value),types:csv($('ruleTypes').value),tags_any:csv($('ruleTags').value),keywords:csv($('ruleKeywords').value),regex:$('ruleRegex').value,mode:$('ruleMode').value,artifact_type:$('ruleArtifact').value,ai_enabled:$('ruleAi').checked,ai_prompt:$('ruleAiPrompt').value,live_enabled:$('ruleLive').checked,scheduled_enabled:$('ruleScheduled').checked,approval_mode:$('ruleApproval').value,schedule_slots:csv($('ruleSlots').value),enabled:false};try{await api('/api/publishing-rules',{method:'POST',body:JSON.stringify(p)});await load()}catch(e){toast(e.message)}};
-async function testChannel(id){try{await api(`/api/channels/${id}/test`,{method:'POST'});toast('Test sent')}catch(e){toast(e.message)}}async function syncStyle(id){try{await api(`/api/styles/${id}/sync`,{method:'POST'});toast('Style synced');await load()}catch(e){toast(e.message)}}async function saveDraft(id){await api(`/api/post-drafts/${id}`,{method:'PATCH',body:JSON.stringify({text:$(`text_${id}`).value,public:$(`public_${id}`).checked})})}async function regenerate(id){await api(`/api/post-drafts/${id}/regenerate`,{method:'POST'});await load()}async function approveDraft(id){try{await saveDraft(id);await api(`/api/post-drafts/${id}/approve`,{method:'POST'});toast('Approved');await load()}catch(e){toast(e.message)}}async function publishDraft(id){try{await saveDraft(id);await api(`/api/post-drafts/${id}/publish`,{method:'POST'});toast('Published');await load()}catch(e){toast(e.message)}}async function scheduleDraft(id){const value=prompt('ISO date/time, например 2026-07-30T15:00:00+03:00');if(!value)return;try{await api(`/api/post-drafts/${id}/schedule`,{method:'POST',body:JSON.stringify({scheduled_at:value})});await load()}catch(e){toast(e.message)}}async function rejectDraft(id){await api(`/api/post-drafts/${id}/reject`,{method:'POST'});await load()}async function toggleRule(id,enabled){await api(`/api/publishing-rules/${id}`,{method:'PATCH',body:JSON.stringify({enabled})});await load()}async function removeItem(url){if(!confirm('Delete?'))return;await api(url,{method:'DELETE'});await load()}
-const queryArtifact=new URLSearchParams(location.search).get('artifact_id');if(queryArtifact)$('artifactId').value=queryArtifact;load().catch(e=>toast(e.message));
-</script></body></html>
+const $=id=>document.getElementById(id);
+const state={channels:[],styles:[],drafts:[],rules:[],events:[]};
+const csv=v=>v.split(',').map(x=>x.trim()).filter(Boolean);
+
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+
+async function api(url,options={}){
+  const r=await fetch(url,{headers:{'Content-Type':'application/json'},...options});
+  if(!r.ok)throw new Error(await r.text());
+  return r.json();
+}
+
+function toast(text){
+  $('status').textContent=text;
+  setTimeout(()=>$('status').textContent='',4500);
+}
+
+function options(items,label){
+  return `<option value="">${label}</option>`+items.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+}
+
+function showTab(id){
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('hidden',x.id!==id));
+  document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===id));
+}
+document.querySelectorAll('[data-tab]').forEach(x=>x.onclick=()=>showTab(x.dataset.tab));
+
+async function load(){
+  const [c,s,d,r,e,pinInfo]=await Promise.all([
+    api('/api/channels'),
+    api('/api/styles'),
+    api('/api/post-drafts'),
+    api('/api/publishing-rules'),
+    api('/api/publishing/events'),
+    api('/api/daily-pass/admin/today').catch(()=>null)
+  ]);
+  Object.assign(state,{channels:c.items,styles:s.items,drafts:d.items,rules:r.items,events:e.items,pinInfo});
+  if(pinInfo){
+    $('pinToday').textContent=pinInfo.today_pin||'----';
+    $('pinTomorrow').textContent=`Завтра: ${pinInfo.tomorrow_pin||'----'}`;
+    $('copyPinBtn').onclick=()=>{
+      navigator.clipboard.writeText(pinInfo.today_pin);
+      toast(`PIN ${pinInfo.today_pin} скопирован в буфер!`);
+    };
+    $('copyPostSnippetBtn').onclick=()=>{
+      const text=`🔑 Код доступа к базе промптов на сегодня: ${pinInfo.today_pin}\n👉 https://8.0x101.lol/prompts`;
+      navigator.clipboard.writeText(text);
+      toast('Текст для поста скопирован в буфер!');
+    };
+    $('broadcastPinBtn').onclick=async()=>{
+      if(!confirm(`Опубликовать утренний анонс PIN-кода (${pinInfo.today_pin}) во все активные Telegram-каналы прямо сейчас?`))return;
+      try{
+        const res=await api('/api/publishing/broadcast-daily-pin',{method:'POST'});
+        if(res.success){
+          const sentCount=(res.results||[]).filter(r=>r.status==='sent').length;
+          toast(`✅ Анонс PIN успешно отправлен в ${sentCount} канал(ов)!`);
+        }else{
+          toast(`⚠️ ${res.message||'Не удалось отправить анонс'}`);
+        }
+        await load();
+      }catch(e){toast(`Ошибка отправки: ${e.message}`)}
+    };
+  }
+  ['draftChannel','ruleChannel'].forEach(id=>$(id).innerHTML=options(state.channels,'Канал'));
+  ['draftStyle','ruleStyle'].forEach(id=>$(id).innerHTML=options(state.styles,'Стиль'));
+  render();
+}
+
+function render(){
+  $('channelList').innerHTML=state.channels.length?state.channels.map(x=>`<article class="card">
+    <h3>${esc(x.name)}</h3>
+    <div class="meta">
+      <span class="badge">${esc(x.chat_id)}</span>
+      <span>${x.enabled?'enabled':'disabled'}</span>
+      <span>${x.test_mode?'test':'production'}</span>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="testChannel('${x.id}')">Test</button>
+      <button class="btn danger" onclick="removeItem('/api/channels/${x.id}')">Delete</button>
+    </div>
+  </article>`).join(''):'<div class="empty">Каналы ещё не добавлены</div>';
+
+  $('styleList').innerHTML=state.styles.length?state.styles.map(x=>`<article class="card">
+    <h3>${esc(x.name)}</h3>
+    <div class="meta">
+      <span>${esc(x.source_channel)}</span>
+      <span>${x.sample_count||0} samples</span>
+      <span>${esc(x.last_synced_at||'never')}</span>
+    </div>
+    <pre>${esc(JSON.stringify(x.style_card||{},null,2))}</pre>
+    <button class="btn" style="margin-top:8px" onclick="syncStyle('${x.id}')">Sync 50 posts</button>
+  </article>`).join(''):'<div class="empty">Профилей пока нет</div>';
+
+  $('draftList').innerHTML=state.drafts.length?state.drafts.map(x=>`<article class="card">
+    <h3>${esc(x.title)}</h3>
+    <div class="meta">
+      <span class="badge">${esc(x.mode)}</span>
+      <span>${esc(x.status)}</span>
+      <span>${x.tokens?.total_tokens||0} tok</span>
+      <span>$${x.cost_usd||0}</span>
+    </div>
+    ${x.review_reason?`<p class="danger">${esc(x.review_reason)}</p>`:''}
+    <textarea class="draft-text" id="text_${x.id}">${esc(x.text)}</textarea>
+    <label class="check"><input type="checkbox" id="public_${x.id}" ${x.public?'checked':''}> public in Lite</label>
+    <div class="actions">
+      <button class="btn" onclick="saveDraft('${x.id}')">Save</button>
+      <button class="btn" onclick="regenerate('${x.id}')">Regenerate</button>
+      <button class="btn" onclick="approveDraft('${x.id}')">Approve</button>
+      <button class="btn primary" onclick="publishDraft('${x.id}')">Publish now</button>
+      <button class="btn" onclick="scheduleDraft('${x.id}')">Schedule</button>
+      <button class="btn danger" onclick="rejectDraft('${x.id}')">Reject</button>
+    </div>
+  </article>`).join(''):'<div class="empty">Черновиков пока нет</div>';
+
+  $('ruleList').innerHTML=state.rules.length?state.rules.map(x=>`<article class="card">
+    <h3>${esc(x.name)}</h3>
+    <div class="meta">
+      <span class="badge">${x.enabled?'enabled':'disabled'}</span>
+      <span>live ${x.live_enabled}</span>
+      <span>scheduled ${x.scheduled_enabled}</span>
+      <span>${esc(x.approval_mode)}</span>
+      <span>rating ≥ ${x.min_rating}</span>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="toggleRule('${x.id}',${!x.enabled})">${x.enabled?'Disable':'Enable'}</button>
+      <button class="btn danger" onclick="removeItem('/api/publishing-rules/${x.id}')">Delete</button>
+    </div>
+  </article>`).join(''):'<div class="empty">Правил пока нет</div>';
+
+  $('eventList').innerHTML=state.events.length?state.events.map(x=>`<article class="card">
+    <b>${esc(x.type)}</b>
+    <div class="meta">${esc(x.created_at)} / ${esc(x.id)}</div>
+    <pre>${esc(JSON.stringify(x,null,2))}</pre>
+  </article>`).join(''):'<div class="empty">Событий пока нет</div>';
+}
+
+$('addChannel').onclick=async()=>{
+  try{
+    await api('/api/channels',{
+      method:'POST',
+      body:JSON.stringify({
+        name:$('channelName').value,chat_id:$('channelChat').value,
+        username:$('channelUsername').value,purpose:$('channelPurpose').value,
+        test_mode:$('channelTest').checked
+      })
+    });
+    await load();
+  }catch(e){toast(e.message)}
+};
+
+$('addStyle').onclick=async()=>{
+  try{
+    await api('/api/styles',{
+      method:'POST',
+      body:JSON.stringify({
+        name:$('styleName').value,source_channel:$('styleSource').value
+      })
+    });
+    await load();
+  }catch(e){toast(e.message)}
+};
+
+$('generateDraft').onclick=async()=>{
+  try{
+    await api('/api/post-drafts',{
+      method:'POST',
+      body:JSON.stringify({
+        artifact_id:$('artifactId').value,mode:$('postMode').value,
+        artifact_type:$('artifactType').value,channel_id:$('draftChannel').value,
+        style_id:$('draftStyle').value
+      })
+    });
+    await load();
+  }catch(e){toast(e.message)}
+};
+
+$('addRule').onclick=async()=>{
+  const p={
+    name:$('ruleName').value,channel_id:$('ruleChannel').value,
+    style_id:$('ruleStyle').value,min_rating:Number($('ruleRating').value),
+    min_complexity:$('ruleComplexity').value?Number($('ruleComplexity').value):null,
+    sources:csv($('ruleSources').value),types:csv($('ruleTypes').value),
+    tags_any:csv($('ruleTags').value),keywords:csv($('ruleKeywords').value),
+    regex:$('ruleRegex').value,mode:$('ruleMode').value,
+    artifact_type:$('ruleArtifact').value,ai_enabled:$('ruleAi').checked,
+    ai_prompt:$('ruleAiPrompt').value,live_enabled:$('ruleLive').checked,
+    scheduled_enabled:$('ruleScheduled').checked,approval_mode:$('ruleApproval').value,
+    schedule_slots:csv($('ruleSlots').value),enabled:false
+  };
+  try{
+    await api('/api/publishing-rules',{method:'POST',body:JSON.stringify(p)});
+    await load();
+  }catch(e){toast(e.message)}
+};
+
+async function testChannel(id){try{await api(`/api/channels/${id}/test`,{method:'POST'});toast('Test sent')}catch(e){toast(e.message)}}
+async function syncStyle(id){try{await api(`/api/styles/${id}/sync`,{method:'POST'});toast('Style synced');await load()}catch(e){toast(e.message)}}
+async function saveDraft(id){await api(`/api/post-drafts/${id}`,{method:'PATCH',body:JSON.stringify({text:$(`text_${id}`).value,public:$(`public_${id}`).checked})})}
+async function regenerate(id){await api(`/api/post-drafts/${id}/regenerate`,{method:'POST'});await load()}
+async function approveDraft(id){try{await saveDraft(id);await api(`/api/post-drafts/${id}/approve`,{method:'POST'});toast('Approved');await load()}catch(e){toast(e.message)}}
+async function publishDraft(id){try{await saveDraft(id);await api(`/api/post-drafts/${id}/publish`,{method:'POST'});toast('Published');await load()}catch(e){toast(e.message)}}
+async function scheduleDraft(id){const value=prompt('ISO date/time, например 2026-07-30T15:00:00+03:00');if(!value)return;try{await api(`/api/post-drafts/${id}/schedule`,{method:'POST',body:JSON.stringify({scheduled_at:value})});await load()}catch(e){toast(e.message)}}
+async function rejectDraft(id){await api(`/api/post-drafts/${id}/reject`,{method:'POST'});await load()}
+async function toggleRule(id,enabled){await api(`/api/publishing-rules/${id}`,{method:'PATCH',body:JSON.stringify({enabled})});await load()}
+async function removeItem(url){if(!confirm('Delete?'))return;await api(url,{method:'DELETE'});await load()}
+
+const queryArtifact=new URLSearchParams(location.search).get('artifact_id');
+if(queryArtifact)$('artifactId').value=queryArtifact;
+load().catch(e=>toast(e.message));
+</script>
+</body>
+</html>

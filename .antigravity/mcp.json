@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "prompt-ops-remote": {
+      "url": "http://localhost:8000/mcp",
+      "transport": "streamable-http",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_API_KEY_HERE"
+      }
+    }
+  }
+}

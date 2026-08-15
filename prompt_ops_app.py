@@ -36,6 +36,11 @@ from publishing_studio import (
     scheduler_loop as publishing_scheduler_loop,
     router as publishing_router,
 )
+from daily_pass import (
+    configure_daily_pass,
+    require_daily_pass_or_admin,
+    router as daily_pass_router,
+)
 from prompt_ops_mcp import PromptOpsMCPBackend, configure_mcp, mcp, mcp_http_app
 
 logging.basicConfig(
@@ -49,6 +54,7 @@ load_dotenv()
 security = HTTPBasic()
 app = FastAPI(title="Prompt Ops Control Tower")
 app.include_router(publishing_router)
+app.include_router(daily_pass_router)
 
 
 @app.middleware("http")
@@ -61,11 +67,17 @@ async def prompt_hostname_router(request: Request, call_next: Any) -> Response:
             request.scope["path"] = "/prompts"
             request.scope["raw_path"] = b"/prompts"
         else:
-            public_get = request.method == "GET" and (path == "/health" or path == "/api/prompts" or re.fullmatch(r"/api/prompts/P-\d{6}", path))
+            public_get = request.method == "GET" and (
+                path == "/health"
+                or path == "/api/prompts"
+                or re.fullmatch(r"/api/prompts/P-\d{6}", path)
+                or path.startswith("/api/daily-pass/")
+            )
             public_export = request.method == "POST" and path == "/api/prompts/export"
+            public_daily_pass = request.method == "POST" and path.startswith("/api/daily-pass/")
             protected_analysis = request.method == "POST" and path == "/api/prompts/analyze"
             mcp_request = path == "/mcp" or path.startswith("/mcp/")
-            if not (public_get or public_export or protected_analysis or mcp_request):
+            if not (public_get or public_export or public_daily_pass or protected_analysis or mcp_request):
                 return JSONResponse({"detail": "Prompt-only surface"}, status_code=404)
     return await call_next(request)
 
@@ -3349,6 +3361,7 @@ async def api_prompts(
     min_literacy: int = 0, max_literacy: int = 100,
     complexity_buckets: str = "", literacy_buckets: str = "",
     sort: str = "newest", offset: int = 0, limit: int = 200, view: str = "full",
+    _auth: None = Depends(require_daily_pass_or_admin),
 ) -> JSONResponse:
     prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
     wanted_tags = split_filter_values(tags)
@@ -3379,7 +3392,7 @@ async def api_prompts(
 
 
 @app.get("/api/prompts/{serial}")
-async def api_prompt_detail(serial: str) -> JSONResponse:
+async def api_prompt_detail(serial: str, _auth: None = Depends(require_daily_pass_or_admin)) -> JSONResponse:
     prompt = await load_prompt_by_serial(serial)
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found")
@@ -3387,7 +3400,7 @@ async def api_prompt_detail(serial: str) -> JSONResponse:
 
 
 @app.post("/api/prompts/export")
-async def api_prompt_export(payload: dict[str, Any] = Body(...)) -> Response:
+async def api_prompt_export(payload: dict[str, Any] = Body(...), _auth: None = Depends(require_daily_pass_or_admin)) -> Response:
     format_name = str(payload.get("format", "md")).lower()
     if format_name not in {"md", "json"}:
         raise HTTPException(status_code=400, detail="Format must be md or json")
@@ -3661,6 +3674,7 @@ async def lifespan(_: FastAPI):
         }
 
     configure_publishing(app, load_selected_records, record_usage)
+    configure_daily_pass(app)
     configure_mcp(PromptOpsMCPBackend(
         list_prompts=mcp_list_prompts_backend,
         get_prompt=mcp_get_prompt_backend,
