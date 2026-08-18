@@ -71,7 +71,10 @@ async def prompt_hostname_router(request: Request, call_next: Any) -> Response:
                 path == "/health"
                 or path == "/api/prompts"
                 or path == "/prompts"
+                or path == "/webapp"
                 or path == "/lite"
+                or path == "/api/sources"
+                or path == "/api/state"
                 or path.startswith("/api/public/")
                 or re.fullmatch(r"/api/prompts/P-\d{6}", path)
             )
@@ -583,6 +586,7 @@ class Config:
     poll_tick_seconds: int
     scan_roots: list[str]
     telegram_bot_token: str
+    telegram_webapp_url: str
     telegram_chat_id: str
     telegram_api_id: int | None
     telegram_api_hash: str | None
@@ -607,6 +611,13 @@ class Config:
             and self.telegram_bot_token != "your-bot-token-here"
             and self.telegram_chat_id
             and self.telegram_chat_id != "-1001234567890"
+        )
+
+    @property
+    def has_telegram_bot(self) -> bool:
+        return bool(
+            self.telegram_bot_token
+            and self.telegram_bot_token != "your-bot-token-here"
         )
 
     @property
@@ -651,6 +662,7 @@ def load_config() -> Config:
         poll_tick_seconds=max(15, int(os.getenv("POLL_TICK_SECONDS", 45))),
         scan_roots=scan_roots,
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+        telegram_webapp_url=os.getenv("TELEGRAM_WEBAPP_URL", "https://0x101.lol/webapp").strip(),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
         telegram_api_id=int(os.getenv("TELEGRAM_API_ID", "0") or 0) or None,
         telegram_api_hash=os.getenv("TELEGRAM_API_HASH", "").strip() or None,
@@ -2687,6 +2699,340 @@ async def start_telethon_userbot(http_client: AsyncClient, redis_client: aioredi
         app.state.telethon_client = None
 
 
+async def init_telegram_bot_menu(http_client: AsyncClient, cfg: Config) -> None:
+    if not cfg.has_telegram_bot:
+        return
+    token = cfg.telegram_bot_token
+    base_url = f"https://api.telegram.org/bot{token}"
+    commands = [
+        {"command": "start", "description": "🚀 Главное меню и WebApp"},
+        {"command": "webapp", "description": "⚡ Открыть Telegram WebApp"},
+        {"command": "status", "description": "📊 Статус Control Tower"},
+        {"command": "prompts", "description": "📑 Каталог промптов"},
+        {"command": "latest", "description": "🔥 Свежие находки и сигналы"},
+        {"command": "studio", "description": "✍️ Студия публикаций"},
+    ]
+    try:
+        res = await http_client.post(f"{base_url}/setMyCommands", json={"commands": commands}, timeout=10.0)
+        logging.info("Telegram bot setMyCommands response: %s", res.status_code)
+    except Exception as exc:
+        logging.warning("Failed to set Telegram bot commands: %s", exc)
+
+    if cfg.telegram_webapp_url:
+        try:
+            menu_btn = {
+                "menu_button": {
+                    "type": "web_app",
+                    "text": "Prompt Ops",
+                    "web_app": {"url": cfg.telegram_webapp_url},
+                }
+            }
+            res = await http_client.post(f"{base_url}/setChatMenuButton", json=menu_btn, timeout=10.0)
+            logging.info("Telegram bot setChatMenuButton response: %s", res.status_code)
+        except Exception as exc:
+            logging.warning("Failed to set Telegram chat menu button: %s", exc)
+
+
+async def send_telegram_bot_message(
+    http_client: AsyncClient,
+    token: str,
+    chat_id: int | str,
+    text: str,
+    reply_markup: dict[str, Any] | None = None,
+    parse_mode: str = "HTML",
+) -> dict[str, Any] | None:
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": False,
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        res = await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload, timeout=10.0)
+        return res.json()
+    except Exception as exc:
+        logging.warning("Failed to send Telegram bot message: %s", exc)
+        return None
+
+
+async def handle_telegram_bot_update(
+    http_client: AsyncClient,
+    update: dict[str, Any],
+    cfg: Config,
+) -> None:
+    token = cfg.telegram_bot_token
+    webapp_url = cfg.telegram_webapp_url or "https://0x101.lol/webapp"
+
+    if "callback_query" in update:
+        cq = update["callback_query"]
+        cq_id = cq.get("id")
+        data = cq.get("data", "")
+        msg = cq.get("message") or {}
+        chat_id = msg.get("chat", {}).get("id")
+
+        if cq_id:
+            try:
+                await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id}, timeout=5.0)
+            except Exception:
+                pass
+
+        if not chat_id:
+            return
+
+        if data == "cmd:status":
+            prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
+            sources = await load_source_catalog()
+            vector_status = getattr(app.state, "vector_status", "unknown")
+            session_id = getattr(app.state, "session_id", "-")
+            status_text = (
+                f"📊 <b>Prompt Ops Control Tower // Status</b>\n\n"
+                f"• <b>AI Провайдер:</b> <code>{html.escape(cfg.provider_name)}</code> ({html.escape(cfg.provider_model)})\n"
+                f"• <b>Qdrant Vectors:</b> <code>{html.escape(vector_status)}</code>\n"
+                f"• <b>Промптов в базе:</b> <code>{len(prompts)}</code>\n"
+                f"• <b>Источников:</b> <code>{len(sources)}</code>\n"
+                f"• <b>Session ID:</b> <code>{html.escape(session_id[:12])}</code>\n"
+                f"• <b>Время (UTC):</b> <code>{iso_now()}</code>"
+            )
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Открыть WebApp", "web_app": {"url": webapp_url}}],
+                    [{"text": "📑 Каталог", "callback_data": "cmd:prompts"}, {"text": "🔥 Сигналы", "callback_data": "cmd:latest"}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, status_text, markup)
+            return
+
+        if data == "cmd:prompts":
+            prompts = await load_prompt_catalog(5)
+            if not prompts:
+                p_text = "📑 <b>Каталог промптов:</b>\n\n<i>Каталог пуст или синхронизируется...</i>"
+            else:
+                p_lines = ["📑 <b>Топ промптов из каталога:</b>\n"]
+                for p in prompts[:5]:
+                    title = html.escape(p.get("title") or p.get("serial", "Промпт"))
+                    tags = " ".join(f"#{t}" for t in p.get("tags", [])[:3])
+                    serial = p.get("serial", "")
+                    p_lines.append(f"• <b>[{serial}]</b> {title}\n  <i>{tags}</i>")
+                p_text = "\n".join(p_lines)
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Открыть полный каталог в WebApp", "web_app": {"url": webapp_url}}],
+                    [{"text": "📊 Статус", "callback_data": "cmd:status"}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, p_text, markup)
+            return
+
+        if data == "cmd:latest":
+            artifacts = await load_recent_artifacts(5)
+            if not artifacts:
+                l_text = "🔥 <b>Свежие находки и сигналы:</b>\n\n<i>Пока нет новых сигналов...</i>"
+            else:
+                l_lines = ["🔥 <b>Свежие сигналы AI-радара:</b>\n"]
+                for a in artifacts[:5]:
+                    title = html.escape(a.get("title") or "Артефакт")
+                    src = html.escape(a.get("source_name") or a.get("origin") or "web")
+                    rating = a.get("rating", 0)
+                    l_lines.append(f"• <b>{title}</b> ({src}) [★{rating}]")
+                l_text = "\n".join(l_lines)
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Открыть Радар в WebApp", "web_app": {"url": webapp_url}}],
+                    [{"text": "📊 Статус", "callback_data": "cmd:status"}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, l_text, markup)
+            return
+
+        if data == "cmd:studio":
+            s_text = "✍️ <b>Telegram Publishing Studio</b>\n\nСоздание постов от первого лица, генерация SVG-карточек и публикация в Telegram-каналы."
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Открыть Студию", "web_app": {"url": webapp_url}}],
+                    [{"text": "📊 Статус", "callback_data": "cmd:status"}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, s_text, markup)
+            return
+
+    if "message" in update:
+        msg = update["message"]
+        chat = msg.get("chat", {})
+        chat_id = chat.get("id")
+        text = (msg.get("text") or "").strip()
+        from_user = msg.get("from", {})
+        user_name = from_user.get("first_name") or from_user.get("username") or "Пользователь"
+
+        if not chat_id or not text:
+            return
+
+        cmd = text.split()[0].lower() if text.startswith("/") else ""
+
+        if cmd in {"/start", "/help"}:
+            greeting = (
+                f"🚀 <b>Prompt Ops Control Tower & Telegram Studio</b>\n\n"
+                f"Привет, <b>{html.escape(user_name)}</b>!\n"
+                f"Система управления базой промптов, мониторинга источников и публикации контента активна.\n\n"
+                f"🌐 <b>WebApp:</b> {html.escape(webapp_url)}\n"
+                f"⚡ <b>Статус:</b> <code>Online</code>\n\n"
+                f"Нажмите кнопку <b>«⚡ Открыть Prompt Ops»</b> ниже, чтобы запустить приложение прямо в Telegram."
+            )
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Открыть Prompt Ops WebApp", "web_app": {"url": webapp_url}}],
+                    [{"text": "📊 Статус системы", "callback_data": "cmd:status"}, {"text": "📑 Каталог промптов", "callback_data": "cmd:prompts"}],
+                    [{"text": "🔥 Свежие находки", "callback_data": "cmd:latest"}, {"text": "✍️ Студия", "callback_data": "cmd:studio"}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, greeting, markup)
+            return
+
+        if cmd in {"/webapp", "/app"}:
+            body = "⚡ <b>Prompt Ops Telegram Mini App</b>\n\nНажмите кнопку ниже для перехода в WebApp:"
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Запустить WebApp", "web_app": {"url": webapp_url}}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, body, markup)
+            return
+
+        if cmd == "/status":
+            prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
+            sources = await load_source_catalog()
+            vector_status = getattr(app.state, "vector_status", "unknown")
+            session_id = getattr(app.state, "session_id", "-")
+            status_text = (
+                f"📊 <b>Prompt Ops Control Tower // Status</b>\n\n"
+                f"• <b>AI Провайдер:</b> <code>{html.escape(cfg.provider_name)}</code> ({html.escape(cfg.provider_model)})\n"
+                f"• <b>Qdrant Vectors:</b> <code>{html.escape(vector_status)}</code>\n"
+                f"• <b>Промптов в базе:</b> <code>{len(prompts)}</code>\n"
+                f"• <b>Источников:</b> <code>{len(sources)}</code>\n"
+                f"• <b>Session ID:</b> <code>{html.escape(session_id[:12])}</code>\n"
+                f"• <b>Время (UTC):</b> <code>{iso_now()}</code>"
+            )
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Открыть WebApp", "web_app": {"url": webapp_url}}],
+                    [{"text": "📑 Каталог", "callback_data": "cmd:prompts"}, {"text": "🔥 Сигналы", "callback_data": "cmd:latest"}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, status_text, markup)
+            return
+
+        if cmd in {"/prompts", "/catalog"}:
+            prompts = await load_prompt_catalog(5)
+            if not prompts:
+                p_text = "📑 <b>Каталог промптов:</b>\n\n<i>Каталог пуст или синхронизируется...</i>"
+            else:
+                p_lines = ["📑 <b>Топ промптов из каталога:</b>\n"]
+                for p in prompts[:5]:
+                    title = html.escape(p.get("title") or p.get("serial", "Промпт"))
+                    tags = " ".join(f"#{t}" for t in p.get("tags", [])[:3])
+                    serial = p.get("serial", "")
+                    p_lines.append(f"• <b>[{serial}]</b> {title}\n  <i>{tags}</i>")
+                p_text = "\n".join(p_lines)
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Открыть полный каталог в WebApp", "web_app": {"url": webapp_url}}],
+                    [{"text": "📊 Статус", "callback_data": "cmd:status"}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, p_text, markup)
+            return
+
+        if cmd == "/latest":
+            artifacts = await load_recent_artifacts(5)
+            if not artifacts:
+                l_text = "🔥 <b>Свежие находки и сигналы:</b>\n\n<i>Пока нет новых сигналов...</i>"
+            else:
+                l_lines = ["🔥 <b>Свежие сигналы AI-радара:</b>\n"]
+                for a in artifacts[:5]:
+                    title = html.escape(a.get("title") or "Артефакт")
+                    src = html.escape(a.get("source_name") or a.get("origin") or "web")
+                    rating = a.get("rating", 0)
+                    l_lines.append(f"• <b>{title}</b> ({src}) [★{rating}]")
+                l_text = "\n".join(l_lines)
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Открыть Радар в WebApp", "web_app": {"url": webapp_url}}],
+                    [{"text": "📊 Статус", "callback_data": "cmd:status"}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, l_text, markup)
+            return
+
+        if cmd == "/studio":
+            s_text = "✍️ <b>Telegram Publishing Studio</b>\n\nСоздание постов от первого лица, генерация SVG-карточек и публикация в Telegram-каналы."
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ Открыть Студию", "web_app": {"url": webapp_url}}],
+                    [{"text": "📊 Статус", "callback_data": "cmd:status"}]
+                ]
+            }
+            await send_telegram_bot_message(http_client, token, chat_id, s_text, markup)
+            return
+
+        fallback = (
+            f"💡 Команда не распознана: <code>{html.escape(text[:30])}</code>\n\n"
+            f"Используйте команды меню или откройте WebApp:"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "⚡ Открыть WebApp", "web_app": {"url": webapp_url}}],
+                [{"text": "📊 Статус", "callback_data": "cmd:status"}, {"text": "📑 Каталог", "callback_data": "cmd:prompts"}]
+            ]
+        }
+        await send_telegram_bot_message(http_client, token, chat_id, fallback, markup)
+
+
+async def telegram_bot_polling_loop(http_client: AsyncClient) -> None:
+    cfg: Config = app.state.config
+    if not cfg.has_telegram_bot:
+        logging.info("Telegram bot polling disabled (token not configured)")
+        return
+
+    logging.info("Starting Telegram Bot API polling loop...")
+    await init_telegram_bot_menu(http_client, cfg)
+
+    offset = 0
+    token = cfg.telegram_bot_token
+    base_url = f"https://api.telegram.org/bot{token}"
+
+    while True:
+        try:
+            params = {
+                "offset": offset,
+                "timeout": 20,
+                "allowed_updates": ["message", "callback_query"],
+            }
+            response = await http_client.post(f"{base_url}/getUpdates", json=params, timeout=30.0)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("ok"):
+                    for update in data.get("result", []):
+                        update_id = update.get("update_id", 0)
+                        offset = max(offset, update_id + 1)
+                        try:
+                            await handle_telegram_bot_update(http_client, update, cfg)
+                        except Exception as update_err:
+                            logging.warning("Error processing Telegram update %s: %s", update_id, update_err)
+            elif response.status_code == 409:
+                logging.warning("Telegram Bot getUpdates conflict (409). Retrying in 5s...")
+                await asyncio.sleep(5.0)
+            else:
+                logging.warning("Telegram Bot getUpdates unexpected status %s: %s", response.status_code, response.text[:200])
+                await asyncio.sleep(3.0)
+        except asyncio.CancelledError:
+            logging.info("Telegram Bot API polling stopped")
+            break
+        except Exception as exc:
+            logging.warning("Telegram Bot polling error: %s", exc)
+            await asyncio.sleep(3.0)
+
+
 async def count_artifacts() -> int:
     client: QdrantClient | None = getattr(app.state, "qdrant", None)
     if client and getattr(app.state, "vector_ready", False):
@@ -3781,6 +4127,14 @@ async def mcp_catalog_stats_backend() -> dict[str, Any]:
     }
 
 
+@app.get("/webapp", response_class=HTMLResponse)
+async def telegram_webapp_page() -> HTMLResponse:
+    webapp_file = Path(__file__).resolve().parent / "webapp" / "index.html"
+    if webapp_file.exists():
+        return HTMLResponse(webapp_file.read_text(encoding="utf-8"))
+    return HTMLResponse((Path(__file__).resolve().parent / "prompts" / "index.html").read_text(encoding="utf-8"))
+
+
 @app.get("/prompts", response_class=HTMLResponse)
 async def prompt_catalog_page() -> HTMLResponse:
     return HTMLResponse((Path(__file__).resolve().parent / "prompts" / "index.html").read_text(encoding="utf-8"))
@@ -3893,6 +4247,8 @@ async def lifespan(_: FastAPI):
     app.state.background_tasks.append(asyncio.create_task(publishing_scheduler_loop()))
     app.state.background_tasks.append(asyncio.create_task(poll_sources_loop(app.state.http_client, app.state.redis)))
     app.state.background_tasks.append(asyncio.create_task(vector_watchdog_loop()))
+    if cfg.has_telegram_bot:
+        app.state.background_tasks.append(asyncio.create_task(telegram_bot_polling_loop(app.state.http_client)))
     if cfg.has_telethon:
         app.state.background_tasks.append(asyncio.create_task(start_telethon_userbot(app.state.http_client, app.state.redis)))
 
