@@ -128,9 +128,29 @@ MAX_PROMPT_CATALOG = 1_000
 DUPE_TTL_SECONDS = 60 * 60 * 24 * 14
 GALLERY_CATEGORIES = {"Prompt", "System Prompt", "Image Prompt", "Video Prompt", "NotebookLM", "Distillate", "Pipeline", "Instruction", "Skill", "Agent", "Rule"}
 PROMPT_CATEGORIES = {"Prompt", "System Prompt", "Image Prompt", "Video Prompt", "NotebookLM", "Distillate"}
-PUBLIC_PROMPT_SOURCE_KINDS = {"prompt_csv", "rss", "github_atom", "web_page", "x_search"}
+PUBLIC_PROMPT_SOURCE_KINDS = {"prompt_csv", "rss", "github_atom", "web_page", "x_search", "github_spider"}
 
 DEFAULT_SOURCE_BLUEPRINTS = [
+    {
+        "id": "github_spider_cursorrules",
+        "name": "Cursor & Windsurf Rules Spider",
+        "kind": "github_spider",
+        "repo": "PatrickJS/awesome-cursorrules",
+        "branch": "main",
+        "enabled": True,
+        "recommended_interval_seconds": 21600,
+        "cadence_reason": "Глубокий спайдер правил .cursorrules и система инструкций раз в 6 часов.",
+    },
+    {
+        "id": "github_spider_mcp_servers",
+        "name": "MCP Servers & Tools Spider",
+        "kind": "github_spider",
+        "repo": "modelcontextprotocol/servers",
+        "branch": "main",
+        "enabled": True,
+        "recommended_interval_seconds": 21600,
+        "cadence_reason": "Обход конфигураций и промпт-инструментов MCP раз в 6 часов.",
+    },
     {
         "id": "prompts_chat_catalog",
         "name": "prompts.chat prompt catalog",
@@ -2325,6 +2345,137 @@ async def fetch_prompt_csv_items(client: AsyncClient, source: dict[str, Any]) ->
     return items
 
 
+def parse_spider_artifact(file_path: str, raw_text: str, repo: str) -> dict[str, Any]:
+    lines = raw_text.splitlines()
+    title = ""
+    summary = ""
+    tags: list[str] = []
+    group = "General Prompts"
+
+    if raw_text.startswith("---"):
+        parts = raw_text.split("---", 2)
+        if len(parts) >= 3:
+            fm_text = parts[1]
+            for fm_line in fm_text.splitlines():
+                if fm_line.startswith("name:"):
+                    title = fm_line.split(":", 1)[1].strip(" \"'")
+                elif fm_line.startswith("title:"):
+                    title = fm_line.split(":", 1)[1].strip(" \"'")
+                elif fm_line.startswith("description:"):
+                    summary = fm_line.split(":", 1)[1].strip(" \"'")
+                elif fm_line.startswith("tags:"):
+                    raw_tags = fm_line.split(":", 1)[1].strip(" []\"'")
+                    tags = [t.strip(" \"'") for t in raw_tags.split(",") if t.strip()]
+
+    if not title:
+        for line in lines[:10]:
+            if line.startswith("# "):
+                title = line.removeprefix("# ").strip()
+                break
+    if not title:
+        title = Path(file_path).stem.replace("_", " ").replace("-", " ").title()
+        if title in {"Index", "Readme", "Skill", "Agents", "Prompt", "Cursorrules"}:
+            repo_short = repo.split("/")[-1]
+            title = f"{repo_short} - {file_path}"
+
+    lower_path = file_path.lower()
+    if "cursorrules" in lower_path or "windsurfrules" in lower_path or "agent" in lower_path or "rule" in lower_path:
+        group = "Rules & Guidelines"
+    elif "skill" in lower_path:
+        group = "Agent Skills"
+    elif "mcp" in lower_path or "tool" in lower_path or "pipeline" in lower_path:
+        group = "Pipelines & Tools"
+    elif "system" in lower_path:
+        group = "System Prompts"
+    else:
+        group = "General Prompts"
+
+    if not summary:
+        non_empty = [l.strip() for l in lines if l.strip() and not l.startswith("#") and not l.startswith("---")]
+        summary = " ".join(non_empty[:3])[:240]
+
+    return {
+        "title": title,
+        "summary": summary or f"Артефакт из файла {file_path} репозитория {repo}",
+        "artifact_group": group,
+        "tags": tags or [group.lower().split()[0]],
+        "raw": raw_text[:MAX_SNIPPET_CHARS],
+    }
+
+
+async def fetch_github_spider_items(client: AsyncClient, source: dict[str, Any]) -> list[dict[str, Any]]:
+    repo = source.get("repo", "PatrickJS/awesome-cursorrules")
+    branch = source.get("branch", "main")
+    tree_url = f"https://api.github.com/repos/{repo}/git/trees/{branch}?recursive=1"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; Prompt-Ops-Control-Tower/1.0)",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    github_token = os.getenv("GITHUB_TOKEN", "").strip()
+    if github_token:
+        headers["Authorization"] = f"token {github_token}"
+
+    file_paths: list[str] = []
+    try:
+        res = await client.get(tree_url, headers=headers, timeout=20.0)
+        if res.status_code == 200:
+            tree_data = res.json()
+            for node in tree_data.get("tree", []):
+                if node.get("type") == "blob":
+                    path = node.get("path", "")
+                    lpath = path.lower()
+                    if (lpath.endswith((".cursorrules", ".windsurfrules", "agents.md", "skill.md", "prompt.md", "mcp.json")) or
+                        "rules/" in lpath or "skills/" in lpath or "prompts/" in lpath):
+                        file_paths.append(path)
+    except Exception as exc:
+        logging.warning("GitHub API tree search failed for %s: %s", repo, exc)
+
+    if not file_paths:
+        file_paths = [".cursorrules", ".windsurfrules", "AGENTS.md", "SKILL.md", "PROMPT.md", "SYSTEM_PROMPT.md", "mcp.json"]
+
+    items: list[dict[str, Any]] = []
+    redis_client = getattr(app.state, "redis", None) if hasattr(app, "state") else None
+
+    for fpath in file_paths[:15]:
+        raw_url = f"https://raw.githubusercontent.com/{repo}/{branch}/{fpath}"
+        try:
+            raw_res = await client.get(raw_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15.0)
+            if raw_res.status_code != 200:
+                continue
+            content = raw_res.text
+            if not content.strip():
+                continue
+
+            content_hash = hashlib.sha256(f"{repo}:{fpath}:{content}".encode()).hexdigest()
+            if redis_client:
+                if await redis_client.sismember("promptops:spider:seen", content_hash):
+                    continue
+                await redis_client.sadd("promptops:spider:seen", content_hash)
+
+            parsed = parse_spider_artifact(fpath, content, repo)
+            items.append({
+                "text": f"Title: {parsed['title']}\nSummary: {parsed['summary']}\nRepo: {repo}\nFile: {fpath}\nRaw:\n{content[:1500]}",
+                "path": f"{repo}/{fpath}",
+                "source_id": source["id"],
+                "source_name": source["name"],
+                "source_kind": "github_spider",
+                "artifact_group": parsed["artifact_group"],
+                "source_url": raw_url,
+                "title": parsed["title"],
+                "summary": parsed["summary"],
+                "raw": content[:MAX_SNIPPET_CHARS],
+                "tags": parsed["tags"],
+                "published_at": iso_now(),
+                "published_ts": now_utc().timestamp(),
+                "origin": "github_spider",
+            })
+        except Exception as exc:
+            logging.warning("Failed fetching spider file %s/%s: %s", repo, fpath, exc)
+
+    return items
+
+
 async def fetch_feed_items(client: AsyncClient, source: dict[str, Any]) -> list[dict[str, Any]]:
     if not source.get("enabled", True) or source.get("paused"):
         return []
@@ -2337,11 +2488,14 @@ async def fetch_feed_items(client: AsyncClient, source: dict[str, Any]) -> list[
         return await fetch_rss_items(client, source)
     if kind == "github_atom":
         return await fetch_github_atom_items(client, source)
+    if kind == "github_spider":
+        return await fetch_github_spider_items(client, source)
     if kind == "web_page":
         return await fetch_web_page_items(client, source)
     if kind == "x_search":
         return await fetch_x_search_items(client, source)
     return []
+
 
 
 def source_effective_interval(source: dict[str, Any]) -> int:
@@ -2709,14 +2863,17 @@ def render_source_card(source: dict[str, Any]) -> str:
     paused = bool(source.get("paused"))
     enabled = bool(source.get("enabled", True))
     action_state = "resume" if paused else "pause"
+    kind = str(source.get("kind", ""))
+    spider_btn = f'<button class="tinybtn" title="Run Deep Spider Now" onclick="spiderSourceNow(\'{source_id}\')">[🕷️ spider]</button>' if kind == "github_spider" else ""
     return f"""
     <div class="source-row {state}" data-source-id="{source_id}" title="{detail}">
         <span class="state">{marker}</span>
         <span class="source-name">{html.escape(source.get('name', ''))}<small>{detail}</small></span>
-        <span>{html.escape(source.get('kind', ''))}</span>
+        <span>{html.escape(kind)}</span>
         <span>{cadence}</span>
         <span>{next_refresh}</span>
         <span class="source-actions">
+            {spider_btn}
             <input aria-label="interval" type="number" min="30" step="30" value="{interval}" data-source-interval="{source_id}">
             <button class="tinybtn" title="save interval" onclick="saveSourceInterval('{source_id}')">[s]</button>
             <button class="tinybtn" title="{action_state}" onclick="toggleSourcePaused('{source_id}', {str(paused).lower()})">[{action_state[0]}]</button>
@@ -2824,10 +2981,12 @@ def render_source_form() -> str:
     options = """
         <option value="rss">rss</option>
         <option value="github_atom">github_atom</option>
+        <option value="github_spider">github_spider</option>
         <option value="web_page">web_page</option>
         <option value="x_search">x_search</option>
         <option value="workspace">workspace</option>
     """
+
     return f"""
     <div class="panel">
         <h2>Add source</h2>
@@ -3027,10 +3186,10 @@ async def add_source(payload: dict[str, Any] = Body(...), username: str = Depend
         if not url:
             raise HTTPException(status_code=400, detail=f"URL is required for {kind}")
         new_source["url"] = url
-    elif kind == "github_atom":
+    elif kind in {"github_atom", "github_spider"}:
         repo = str(payload.get("repo", "")).strip()
         if not repo:
-            raise HTTPException(status_code=400, detail="Repo is required for github_atom")
+            raise HTTPException(status_code=400, detail=f"Repo is required for {kind}")
         new_source["repo"] = repo
         new_source["branch"] = str(payload.get("branch", "main")).strip() or "main"
     elif kind == "x_search":
@@ -3051,6 +3210,23 @@ async def add_source(payload: dict[str, Any] = Body(...), username: str = Depend
     catalog.insert(0, new_source)
     await save_source_catalog(catalog)
     return JSONResponse({"ok": True, "item": new_source, "user": username})
+
+
+@app.post("/api/sources/{source_id}/spider-now")
+async def trigger_spider_now(source_id: str, username: str = Depends(authenticate)) -> JSONResponse:
+    catalog = await load_source_catalog()
+    source = next((s for s in catalog if s["id"] == source_id), None)
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    
+    items = await fetch_feed_items(app.state.http_client, source)
+    processed = 0
+    for item in items:
+        record = await process_item(item)
+        if record:
+            processed += 1
+    return JSONResponse({"ok": True, "source_id": source_id, "found": len(items), "processed": processed, "user": username})
+
 
 
 @app.patch("/api/sources/{source_id}")

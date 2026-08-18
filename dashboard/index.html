@@ -784,6 +784,19 @@ async function deleteSource(id){
   if(!r.ok)return showResult('ERROR',await r.text());
   location.reload();
 }
+async function spiderSourceNow(id){
+  showResult('RUNNING', `Launching Deep Spider for ${id}...`);
+  try {
+    const r = await fetch(`/api/sources/${id}/spider-now`, {method:'POST'});
+    if(!r.ok) return showResult('ERROR', await r.text());
+    const res = await r.json();
+    showResult('SUCCESS', `Deep Spider finished!\nFound ${res.found} files, ingested ${res.processed} artifacts.`);
+    setTimeout(() => location.reload(), 2000);
+  } catch(e) {
+    showResult('ERROR', e.message);
+  }
+}
+
 
 async function downloadResponse(response,name){
   const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');
