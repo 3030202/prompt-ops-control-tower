@@ -84,92 +84,9 @@ article p{line-height:1.55;font-size:14px;margin:0 0 12px;color:#282824}
   .shell{padding:10px}
 }
 
-.daily-pass-overlay{
-  position:fixed;inset:0;background:rgba(20,20,18,0.85);
-  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-  z-index:9999;display:flex;align-items:center;justify-content:center;
-  padding:16px;opacity:1;transition:opacity .25s ease,visibility .25s ease;
-}
-.daily-pass-overlay.unlocked{
-  opacity:0;visibility:hidden;pointer-events:none;
-}
-.daily-pass-card{
-  width:100%;max-width:440px;background:#fbfaf6;
-  border:2px solid var(--ink);border-top:6px solid var(--ink);
-  box-shadow:6px 6px 0 var(--ink);
-  padding:28px 24px;text-align:center;position:relative;
-  animation:cardPop .25s ease-out;
-}
-@keyframes cardPop{
-  from{transform:scale(0.95);opacity:0}
-  to{transform:scale(1);opacity:1}
-}
-.dp-badge{
-  font-family:monospace;font-size:11px;font-weight:bold;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--blue);background:#e5f4f8;padding:3px 8px;
-  display:inline-block;margin-bottom:12px;border:1px solid var(--blue);
-}
-.dp-title{
-  font-family:Impact,"Arial Black",sans-serif;font-size:28px;line-height:1;
-  text-transform:uppercase;color:var(--ink);margin:0 0 8px;letter-spacing:-.02em;
-}
-.dp-subtitle{
-  font-size:13px;line-height:1.45;color:var(--muted);margin:0 0 20px;
-}
-.dp-inputs{
-  display:flex;justify-content:center;gap:10px;margin-bottom:14px;
-}
-.dp-digit{
-  width:54px;height:64px;background:#fff;border:2px solid var(--ink);
-  color:var(--ink);font-size:28px;font-weight:bold;text-align:center;
-  font-family:monospace;outline:none;transition:border-color .15s,box-shadow .15s;
-}
-.dp-digit:focus{
-  border-color:var(--blue);outline:2px solid var(--acid);
-}
-.dp-error{
-  min-height:20px;font-family:monospace;font-size:11px;color:#c02626;margin-bottom:14px;font-weight:bold;
-}
-.dp-error.shake{animation:shake .35s ease-in-out}
-@keyframes shake{
-  0%,100%{transform:translateX(0)}
-  20%,60%{transform:translateX(-6px)}
-  40%,80%{transform:translateX(6px)}
-}
-.dp-actions{display:flex;flex-direction:column;gap:8px}
-.dp-tg-btn{
-  display:flex;align-items:center;justify-content:center;gap:8px;
-  background:var(--acid);border:2px solid var(--ink);color:var(--ink);
-  padding:12px 16px;font-family:monospace;font-size:13px;font-weight:800;
-  text-decoration:none;text-transform:uppercase;box-shadow:3px 3px 0 var(--ink);
-  transition:transform .08s;
-}
-.dp-tg-btn:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--ink)}
-.dp-foot{margin-top:16px;font-family:monospace;font-size:10px;color:var(--muted);text-transform:uppercase}
 </style>
 </head>
 <body>
-<div class="daily-pass-overlay" id="dailyPassOverlay">
-  <div class="daily-pass-card">
-    <div class="dp-badge">Access Pass // Ежедневный доступ</div>
-    <h2 class="dp-title">Prompt Ops Pass</h2>
-    <p class="dp-subtitle">Введите 4-значный код доступа из сегодняшнего поста в Telegram-канале.</p>
-    <div class="dp-inputs" id="dpInputs">
-      <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp0" autofocus autocomplete="off">
-      <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp1" autocomplete="off">
-      <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp2" autocomplete="off">
-      <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp3" autocomplete="off">
-    </div>
-    <div class="dp-error" id="dpError"></div>
-    <div class="dp-actions">
-      <a class="dp-tg-btn" id="dpTgLink" href="https://t.me/desp0tat" target="_blank" rel="noopener">
-        <span>✈️ Взять код на сегодня в Telegram</span>
-      </a>
-    </div>
-    <div class="dp-foot">Код обновляется каждые 24 часа. Доступ сохраняется на весь день.</div>
-  </div>
-</div>
-
 <main class="shell">
   <div class="nav-strip">
     <span>Prompt Ops // Public Wire</span>
@@ -204,96 +121,6 @@ article p{line-height:1.55;font-size:14px;margin:0 0 12px;color:#282824}
 <script>
 const base=(window.PROMPT_OPS_API_BASE||document.querySelector('meta[name="prompt-ops-api-base"]')?.content||'').replace(/\/$/,'');
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
-const DAILY_PASS_KEY="promptops_daily_pass_v1";
-
-async function checkDailyPass(){
-  const overlay=document.getElementById("dailyPassOverlay");
-  const stored=JSON.parse(localStorage.getItem(DAILY_PASS_KEY)||"{}");
-  try{
-    const res=await fetch(`${base}/api/daily-pass/status`);
-    if(res.ok){
-      const data=await res.json();
-      if(data.channel_url)document.getElementById("dpTgLink").href=data.channel_url;
-      if(data.unlocked||(stored.date===data.date&&stored.token)){
-        overlay.classList.add("unlocked");
-        return true;
-      }
-    }
-  }catch(e){
-    if(stored.token){
-      overlay.classList.add("unlocked");
-      return true;
-    }
-  }
-  overlay.classList.remove("unlocked");
-  setTimeout(()=>document.getElementById("dp0")?.focus(),150);
-  return false;
-}
-
-function initDailyPass(){
-  const inputs=[0,1,2,3].map(i=>document.getElementById(`dp${i}`));
-  const errorEl=document.getElementById("dpError");
-  inputs.forEach((input,index)=>{
-    input.addEventListener("input",async()=>{
-      input.value=input.value.replace(/\D/g,"").slice(-1);
-      errorEl.textContent="";
-      errorEl.classList.remove("shake");
-      if(input.value&&index<3){
-        inputs[index+1].focus();
-      }
-      const pin=inputs.map(el=>el.value).join("");
-      if(pin.length===4){
-        await submitDailyPin(pin);
-      }
-    });
-    input.addEventListener("keydown",e=>{
-      if(e.key==="Backspace"&&!input.value&&index>0){
-        inputs[index-1].focus();
-      }
-    });
-    input.addEventListener("paste",async e=>{
-      e.preventDefault();
-      const pasted=(e.clipboardData||window.clipboardData).getData("text").replace(/\D/g,"").slice(0,4);
-      if(!pasted)return;
-      for(let i=0;i<4;i++)inputs[i].value=pasted[i]||"";
-      if(pasted.length===4){
-        inputs[3].focus();
-        await submitDailyPin(pasted);
-      }else if(pasted.length>0){
-        inputs[Math.min(3,pasted.length)].focus();
-      }
-    });
-  });
-}
-
-async function submitDailyPin(pin){
-  const errorEl=document.getElementById("dpError");
-  const overlay=document.getElementById("dailyPassOverlay");
-  const inputs=[0,1,2,3].map(i=>document.getElementById(`dp${i}`));
-  try{
-    const res=await fetch(`${base}/api/daily-pass/verify`,{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({pin})
-    });
-    const data=await res.json();
-    if(!res.ok||!data.success){
-      errorEl.textContent=data.detail||data.error||"Неверный код доступа";
-      errorEl.classList.remove("shake");
-      void errorEl.offsetWidth;
-      errorEl.classList.add("shake");
-      inputs.forEach(inp=>{inp.value="";});
-      inputs[0].focus();
-      return;
-    }
-    localStorage.setItem(DAILY_PASS_KEY,JSON.stringify({date:data.date,token:data.token}));
-    overlay.classList.add("unlocked");
-    load();
-  }catch(err){
-    errorEl.textContent="Ошибка сети при проверке кода";
-  }
-}
-
 async function load(){
   const p=new URLSearchParams({
     q:document.getElementById('q').value,
@@ -317,8 +144,6 @@ async function load(){
   }
 }
 
-initDailyPass();
-checkDailyPass();
 document.getElementById('search').onclick=load;
 document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 document.getElementById('mode').onchange=load;

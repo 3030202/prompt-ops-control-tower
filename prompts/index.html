@@ -204,78 +204,6 @@
     .analysis-result{white-space:pre-wrap;color:#b9c7be;font-size:11px;background:#020403;padding:8px;border:1px solid var(--line)}
     .analysis-meta{margin-bottom:8px;color:var(--muted);font-size:11px}
     
-    .daily-pass-overlay{
-      position:fixed;inset:0;background:rgba(2,4,3,0.88);
-      backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-      z-index:9999;display:flex;align-items:center;justify-content:center;
-      padding:16px;opacity:1;transition:opacity .25s ease,visibility .25s ease;
-    }
-    .daily-pass-overlay.unlocked{
-      opacity:0;visibility:hidden;pointer-events:none;
-    }
-    .daily-pass-card{
-      width:100%;max-width:440px;background:#080d0a;
-      border:1px solid #2e4436;border-top:3px solid var(--acid);
-      box-shadow:0 0 50px rgba(0,0,0,0.9),0 0 30px rgba(87,255,143,0.12);
-      padding:28px 24px;text-align:center;position:relative;
-      animation:cardPop .3s ease-out;
-    }
-    @keyframes cardPop{
-      from{transform:scale(0.94);opacity:0}
-      to{transform:scale(1);opacity:1}
-    }
-    .dp-badge{
-      font-size:10px;font-weight:800;letter-spacing:.15em;
-      color:var(--acid);background:#0f1d14;padding:3px 8px;
-      display:inline-block;margin-bottom:12px;border:1px solid #233b2a;
-    }
-    .dp-title{
-      font-size:22px;font-weight:900;color:#fff;margin:0 0 8px;
-      letter-spacing:-.02em;text-transform:uppercase;
-    }
-    .dp-subtitle{
-      font-size:12px;line-height:1.5;color:var(--muted);margin:0 0 24px;
-    }
-    .dp-inputs{
-      display:flex;justify-content:center;gap:12px;margin-bottom:16px;
-    }
-    .dp-digit{
-      width:56px;height:68px;background:#020503;border:2px solid #2a3d31;
-      color:var(--acid);font-size:28px;font-weight:800;text-align:center;
-      font-family:inherit;outline:none;transition:border-color .15s,box-shadow .15s,transform .1s;
-    }
-    .dp-digit:focus{
-      border-color:var(--acid);box-shadow:0 0 16px rgba(87,255,143,0.3);
-      transform:scale(1.04);
-    }
-    .dp-error{
-      min-height:20px;font-size:11px;color:var(--red);margin-bottom:14px;
-      font-weight:700;
-    }
-    .dp-error.shake{
-      animation:shake .35s ease-in-out;
-    }
-    @keyframes shake{
-      0%,100%{transform:translateX(0)}
-      20%,60%{transform:translateX(-6px)}
-      40%,80%{transform:translateX(6px)}
-    }
-    .dp-actions{
-      display:flex;flex-direction:column;gap:8px;
-    }
-    .dp-tg-btn{
-      display:flex;align-items:center;justify-content:center;gap:8px;
-      background:#132419;border:1px solid var(--acid);color:var(--acid);
-      padding:12px 16px;font-size:12px;font-weight:800;text-decoration:none;
-      text-transform:uppercase;letter-spacing:.05em;transition:all .15s;
-    }
-    .dp-tg-btn:hover{
-      background:var(--acid);color:#020603;box-shadow:0 0 20px rgba(87,255,143,0.4);
-    }
-    .dp-foot{
-      margin-top:18px;font-size:10px;color:#5a6e62;letter-spacing:.02em;
-    }
-    
     @media(max-width:900px){
       :root{--top:42px;--foot:0px;--dock:52px}
       .app{grid-template-rows:var(--top) 1fr var(--dock);height:100%;height:100dvh}
@@ -497,22 +425,6 @@
     <pre class="analysis-result" id="analysisResult">Select a non-empty register.</pre>
   </div>
 </dialog>
-
-<div class="daily-pass-overlay" id="dailyPassOverlay">
-  <div class="daily-pass-card">
-    <div class="dp-badge">ACCESS CONTROL // DAILY PASS</div>
-    <h2 class="dp-title">Daily Prompt Pass</h2>
-    <p class="dp-subtitle">Введите 4-значный код: <strong>ЧЧ&nbsp;+&nbsp;десятки&nbsp;минут&nbsp;+&nbsp;любая&nbsp;цифра</strong>.<br>Пример: в&nbsp;16:49&nbsp;МСК&nbsp;→&nbsp;<code>164X</code></p>
-    <div class="dp-inputs" id="dpInputs">
-      <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp0" autofocus autocomplete="off">
-      <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp1" autocomplete="off">
-      <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp2" autocomplete="off">
-      <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp3" autocomplete="off">
-    </div>
-    <div class="dp-error" id="dpError"></div>
-    <div class="dp-foot">Первые 2 цифры — час (МСК), 3-я — десятки минут, 4-я — любая. Обновляется каждые 10 минут.</div>
-  </div>
-</div>
 
 <script>
 const STORAGE_KEY="prompt-register-workspace.v1",PAGE_SIZE=200;
@@ -754,28 +666,9 @@ function renderChips(){
     btn.dataset.kind==="types"||btn.dataset.kind==="tags"?loadPrompts():applyLocalFilters();
   });
 }
-function getDailyPassToken(){
-  try{
-    const stored=JSON.parse(localStorage.getItem(DAILY_PASS_KEY)||"{}");
-    return stored.token||"";
-  }catch(e){return "";}
-}
-
 async function apiFetch(url,options={}){
-  const token=getDailyPassToken();
-  const headers=new Headers(options.headers||{});
-  if(token&&!headers.has("X-Daily-Pass-Token")){
-    headers.set("X-Daily-Pass-Token",token);
-  }
-  const opts={...options,headers};
+  const opts={...options};
   const res=await fetch(url,opts);
-  if(res.status===401){
-    const overlay=$("dailyPassOverlay");
-    if(overlay){
-      overlay.classList.remove("unlocked");
-      setTimeout(()=>$("dp0")?.focus(),150);
-    }
-  }
   return res;
 }
 
@@ -793,10 +686,6 @@ async function loadPrompts(){
   try{
     const first=await apiFetch(`/api/prompts?${query}`);
     if(!first.ok){
-      if(first.status===401){
-        setStatus("DAILY PASS REQUIRED",0);
-        return;
-      }
       throw new Error(`HTTP ${first.status}`);
     }
     const data=await first.json();
@@ -1111,98 +1000,8 @@ document.querySelectorAll("[data-export]").forEach(x=>x.onclick=()=>{
   const [mode,format]=x.dataset.export.split(":");
   exportRegisters(mode,format);
 });
-const DAILY_PASS_KEY="promptops_daily_pass_v1";
 
-async function checkDailyPass(){
-  const overlay=$("dailyPassOverlay");
-  const stored=JSON.parse(localStorage.getItem(DAILY_PASS_KEY)||"{}");
-  try{
-    const res=await fetch("/api/daily-pass/status");
-    if(res.ok){
-      const data=await res.json();
-      if(data.channel_url)$("dpTgLink").href=data.channel_url;
-      if(data.unlocked||(stored.date===data.date&&stored.token)){
-        overlay.classList.add("unlocked");
-        return true;
-      }
-    }
-  }catch(e){
-    if(stored.token){
-      overlay.classList.add("unlocked");
-      return true;
-    }
-  }
-  overlay.classList.remove("unlocked");
-  setTimeout(()=>$("dp0")?.focus(),150);
-  return false;
-}
 
-function initDailyPass(){
-  const inputs=[0,1,2,3].map(i=>$(`dp${i}`));
-  const errorEl=$("dpError");
-  inputs.forEach((input,index)=>{
-    input.addEventListener("input",async()=>{
-      input.value=input.value.replace(/\D/g,"").slice(-1);
-      errorEl.textContent="";
-      errorEl.classList.remove("shake");
-      if(input.value&&index<3){
-        inputs[index+1].focus();
-      }
-      const pin=inputs.map(el=>el.value).join("");
-      if(pin.length===4){
-        await submitDailyPin(pin);
-      }
-    });
-    input.addEventListener("keydown",e=>{
-      if(e.key==="Backspace"&&!input.value&&index>0){
-        inputs[index-1].focus();
-      }
-    });
-    input.addEventListener("paste",async e=>{
-      e.preventDefault();
-      const pasted=(e.clipboardData||window.clipboardData).getData("text").replace(/\D/g,"").slice(0,4);
-      if(!pasted)return;
-      for(let i=0;i<4;i++)inputs[i].value=pasted[i]||"";
-      if(pasted.length===4){
-        inputs[3].focus();
-        await submitDailyPin(pasted);
-      }else if(pasted.length>0){
-        inputs[Math.min(3,pasted.length)].focus();
-      }
-    });
-  });
-}
-
-async function submitDailyPin(pin){
-  const errorEl=$("dpError");
-  const overlay=$("dailyPassOverlay");
-  const inputs=[0,1,2,3].map(i=>$(`dp${i}`));
-  try{
-    const res=await fetch("/api/daily-pass/verify",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({pin})
-    });
-    const data=await res.json();
-    if(!res.ok||!data.success){
-      errorEl.textContent=data.detail||data.error||"Неверный код доступа";
-      errorEl.classList.remove("shake");
-      void errorEl.offsetWidth;
-      errorEl.classList.add("shake");
-      inputs.forEach(inp=>{inp.value="";});
-      inputs[0].focus();
-      return;
-    }
-    localStorage.setItem(DAILY_PASS_KEY,JSON.stringify({date:data.date,token:data.token}));
-    overlay.classList.add("unlocked");
-    loadPrompts();
-  }catch(err){
-    errorEl.textContent="Ошибка сети при проверке кода";
-  }
-}
-
-initDailyPass();
-checkDailyPass();
 loadLocal();
 setPane(window.innerWidth<=900?2:1);
 renderTree();
