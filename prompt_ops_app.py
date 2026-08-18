@@ -1775,6 +1775,14 @@ def provider_messages(action: str, text: str, records: list[dict[str, Any]] | No
             " Анализируй конструкцию, ограничения, ожидаемый выход и пригодность к объединению. Не перепечатывай промпты целиком."
         )
         user = text
+    elif action == "prompt_register_synthesis":
+        system = (
+            "Ты ведущий prompt engineer. Синтезируй единый, готовый к продакшену супер-промпт на основе выбранных исходных промптов. "
+            "Если переданы пожелания пользователя, строго учти их. Верни только JSON: "
+            '{"title":"...","summary":"...","synthesized_prompt":"...","key_features":["..."]}'
+            " Поле synthesized_prompt должно содержать полностью готовый, хорошо структурированный промпт."
+        )
+        user = text
     else:
         merged = render_prompt_merger(records or [])
         system = (
@@ -3449,6 +3457,8 @@ async def api_prompt_analyze(payload: dict[str, Any] = Body(...), username: str 
         raise HTTPException(status_code=400, detail="Select at least one existing prompt")
     if not provider_is_configured():
         raise HTTPException(status_code=503, detail="AI provider is not configured")
+    mode = str(payload.get("mode", "analyze")).lower()
+    user_instructions = str(payload.get("user_instructions", "")).strip()[:1000]
     register_name = str(payload.get("register_name", "REGISTER"))[:80]
     chunks = []
     for prompt in prompts:
@@ -3459,17 +3469,21 @@ async def api_prompt_analyze(payload: dict[str, Any] = Body(...), username: str 
             f"Prompt: {prompt.get('prompt_body', '')[:3000]}"
         )
     analysis_input = f"Register: {register_name}\n\n" + "\n\n---\n\n".join(chunks)
+    if user_instructions:
+        analysis_input += f"\n\nПользовательские пожелания к синтезу/анализу:\n{user_instructions}"
+
+    action = "prompt_register_synthesis" if mode == "synthesize" else "prompt_register_analysis"
     try:
-        result, usage, _ = await call_provider("prompt_register_analysis", analysis_input)
+        result, usage, _ = await call_provider(action, analysis_input)
     except Exception as exc:
-        logging.error("Prompt register analysis failed: %s", exc)
+        logging.error("Prompt register %s failed: %s", mode, exc)
         raise HTTPException(status_code=502, detail="AI analysis failed") from exc
     normalized = normalize_usage(usage, analysis_input, json.dumps(result, ensure_ascii=False))
     cost = estimated_cost(normalized)
     provider = app.state.provider_state
-    await record_usage(provider.get("name", "OpenAI-compatible"), provider.get("model", "unknown"), "prompt_register_analysis", normalized, cost)
+    await record_usage(provider.get("name", "OpenAI-compatible"), provider.get("model", "unknown"), action, normalized, cost)
     return JSONResponse({
-        "ok": True, "result": result, "usage": normalized, "estimated_cost": round(cost, 6),
+        "ok": True, "mode": mode, "result": result, "usage": normalized, "estimated_cost": round(cost, 6),
         "provider": provider.get("name"), "model": provider.get("model"),
         "prompt_count": len(prompts), "user": username,
     })

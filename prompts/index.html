@@ -413,16 +413,28 @@
   </div>
 </dialog>
 <dialog id="analysisDialog">
-  <div class="dialog-head">AI_REGISTER_ANALYSIS<button data-close>×</button></div>
+  <div class="dialog-head">AI_REGISTER_ANALYSIS_&_SYNTHESIS<button data-close>×</button></div>
   <div class="dialog-body">
     <div id="analysisAuth" hidden>
       <p>Basic Auth required for AI usage.</p>
       <input class="command-search" id="analysisUser" autocomplete="username" placeholder="username">
       <input class="command-search" id="analysisPass" type="password" autocomplete="current-password" placeholder="password">
-      <button class="action-btn primary" id="analysisLogin">authenticate + analyze</button>
+      <button class="action-btn primary" id="analysisLogin">authenticate + run</button>
     </div>
     <div class="analysis-meta" id="analysisMeta"></div>
+    <div class="export-actions" style="margin-bottom:10px">
+      <button class="action-btn primary" id="btnModeAnalyze" onclick="setAnalysisMode('analyze')">ANALYZE</button>
+      <button class="action-btn" id="btnModeSynthesize" onclick="setAnalysisMode('synthesize')">SYNTHESIZE</button>
+    </div>
+    <div id="synthesizeControls" style="margin-bottom:10px" hidden>
+      <input class="command-search" id="userInstructions" placeholder="Пожелания к синтезу (например: в стиле Chain-of-Thought, формат JSON)">
+    </div>
+    <button class="action-btn primary" style="width:100%;margin-bottom:10px" onclick="runAnalysis()">RUN AI</button>
     <pre class="analysis-result" id="analysisResult">Select a non-empty register.</pre>
+    <div class="export-actions" id="synthesisActions" style="margin-top:10px" hidden>
+      <button class="action-btn primary" id="btnCopySynthesized" onclick="copySynthesizedPrompt()">COPY PROMPT</button>
+      <button class="action-btn" id="btnSaveSynthesized" onclick="saveSynthesizedToRegister()">SAVE TO REMIX</button>
+    </div>
   </div>
 </dialog>
 
@@ -895,21 +907,31 @@ async function exportRegisters(mode,format){
   $("exportDialog").close();
   setStatus("EXPORTED");
 }
+function setAnalysisMode(mode){
+  state.analysisMode=mode;
+  $("btnModeAnalyze").classList.toggle("primary",mode==="analyze");
+  $("btnModeSynthesize").classList.toggle("primary",mode==="synthesize");
+  $("synthesizeControls").hidden=mode!=="synthesize";
+  $("synthesisActions").hidden=true;
+}
 function openAnalysis(){
   $("analysisDialog").showModal();
   $("analysisAuth").hidden=true;
+  setAnalysisMode(state.analysisMode||"analyze");
   $("analysisMeta").textContent=`${selectedRegister().name} // ${selectedRegister().serials.size} prompts // max 20`;
-  $("analysisResult").textContent="Press [a] or click Analyze to run.";
-  runAnalysis();
+  $("analysisResult").textContent="Select mode and click RUN AI.";
 }
 async function runAnalysis(){
   const reg=selectedRegister(),serials=[...reg.serials];
   if(!serials.length){$("analysisResult").textContent="REGISTER_EMPTY";return}
   if(serials.length>20){$("analysisResult").textContent="LIMIT_EXCEEDED // maximum 20 prompts";return}
-  $("analysisResult").textContent="ANALYZING...";
+  $("analysisResult").textContent="RUNNING AI...";
+  $("synthesisActions").hidden=true;
+  const mode=state.analysisMode||"analyze";
+  const user_instructions=$("userInstructions")?.value||"";
   const headers={"Content-Type":"application/json"};
   if(state.authHeader)headers.Authorization=state.authHeader;
-  const response=await fetch("/api/prompts/analyze",{method:"POST",headers,body:JSON.stringify({serials,register_name:reg.name})});
+  const response=await fetch("/api/prompts/analyze",{method:"POST",headers,body:JSON.stringify({serials,register_name:reg.name,mode,user_instructions})});
   if(response.status===401){
     $("analysisAuth").hidden=false;
     $("analysisResult").textContent="AUTH_REQUIRED";
@@ -922,7 +944,27 @@ async function runAnalysis(){
   }
   $("analysisAuth").hidden=true;
   $("analysisMeta").textContent=`${data.provider} / ${data.model} / ${data.usage.total_tokens} tok / $${data.estimated_cost}`;
-  $("analysisResult").textContent=JSON.stringify(data.result,null,2);
+  if(data.mode==="synthesize"&&data.result?.synthesized_prompt){
+    state.lastSynthesizedPrompt=data.result.synthesized_prompt;
+    $("synthesisActions").hidden=false;
+    let text=`TITLE: ${data.result.title||"Synthesized Prompt"}\nSUMMARY: ${data.result.summary||""}\n\n=== SYNTHESIZED PROMPT ===\n\n${data.result.synthesized_prompt}`;
+    if(data.result.key_features?.length){
+      text+=`\n\nKEY FEATURES:\n- `+data.result.key_features.join("\n- ");
+    }
+    $("analysisResult").textContent=text;
+  }else{
+    $("analysisResult").textContent=JSON.stringify(data.result,null,2);
+  }
+}
+function copySynthesizedPrompt(){
+  if(!state.lastSynthesizedPrompt)return;
+  navigator.clipboard.writeText(state.lastSynthesizedPrompt);
+  setStatus("SYNTHESIZED PROMPT COPIED");
+}
+function saveSynthesizedToRegister(){
+  if(!state.lastSynthesizedPrompt)return;
+  navigator.clipboard.writeText(state.lastSynthesizedPrompt);
+  setStatus("PROMPT COPIED (PASTE TO REMIX)");
 }
 function authenticateAnalysis(){
   const user=$("analysisUser").value,pass=$("analysisPass").value;

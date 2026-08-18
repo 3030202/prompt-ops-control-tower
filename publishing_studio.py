@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
@@ -35,6 +35,65 @@ ARTIFACT_TYPES = {"prompt", "skill", "rule", "checklist", "pipeline"}
 _app: Any = None
 _load_records: Callable[[list[str]], Awaitable[list[dict[str, Any]]]] | None = None
 _record_usage: Callable[..., Awaitable[None]] | None = None
+_temp_uploads: dict[str, dict[str, Any]] = {}
+_cards_cache: dict[str, str] = {}
+
+
+def extract_source_media(record: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    for key in ("og_image", "image", "thumbnail", "media"):
+        val = record.get(key)
+        if isinstance(val, str) and val.startswith(("http://", "https://")):
+            urls.append(val)
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, str) and item.startswith(("http://", "https://")):
+                    urls.append(item)
+    blob = f"{record.get('raw', '')} {record.get('summary', '')}"
+    urls.extend(re.findall(r'!\[.*?\]\((https?://[^\s\)]+)\)', blob))
+    urls.extend(re.findall(r'<img[^>]+src=["\'](https?://[^"\']+)["\']', blob, re.IGNORECASE))
+    seen = set()
+    result = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            result.append(u)
+    return result
+
+
+def generate_prompt_card_svg(title: str, text: str, tags: list[str] | None = None, mode: str = "my_take") -> str:
+    clean_title = html.escape(title[:70] + ("..." if len(title) > 70 else ""))
+    snippet = html.escape(text.replace("\n", " ")[:160] + ("..." if len(text) > 160 else ""))
+    tags_list = tags[:4] if tags else ["prompt", "ops"]
+    tags_svg = "".join([
+        f'<rect x="{100 + i * 140}" y="480" width="120" height="34" rx="4" fill="rgba(0,240,255,0.08)" stroke="#00f0ff" stroke-width="1"/>'
+        f'<text x="{160 + i * 140}" y="502" fill="#00f0ff" font-family="monospace" font-size="13" font-weight="bold" text-anchor="middle">{html.escape(t[:12])}</text>'
+        for i, t in enumerate(tags_list)
+    ])
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+      <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#07090c"/>
+          <stop offset="50%" stop-color="#0f151d"/>
+          <stop offset="100%" stop-color="#07090c"/>
+        </linearGradient>
+        <linearGradient id="neon" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#39ff14"/>
+          <stop offset="100%" stop-color="#00f0ff"/>
+        </linearGradient>
+      </defs>
+      <rect width="1200" height="630" fill="url(#bg)"/>
+      <rect x="20" y="20" width="1160" height="590" rx="12" fill="none" stroke="url(#neon)" stroke-width="2" opacity="0.6"/>
+      <text x="100" y="100" fill="#39ff14" font-family="sans-serif" font-size="16" font-weight="900" letter-spacing="4">PROMPT OPS / EDITORIAL STUDIO</text>
+      <rect x="960" y="75" width="140" height="36" rx="4" fill="rgba(57,255,20,0.12)" stroke="#39ff14" stroke-width="1"/>
+      <text x="1030" y="98" fill="#39ff14" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle">{html.escape(mode.upper())}</text>
+      <text x="100" y="220" fill="#f3f6f9" font-family="sans-serif" font-size="44" font-weight="900">{clean_title}</text>
+      <rect x="100" y="270" width="1000" height="1" fill="rgba(255,255,255,0.1)"/>
+      <text x="100" y="340" fill="#8b96a5" font-family="sans-serif" font-size="22" font-weight="400">{snippet}</text>
+      {tags_svg}
+      <text x="1100" y="570" fill="#4a5568" font-family="monospace" font-size="14" text-anchor="end">8.0x101.lol / promptops</text>
+    </svg>"""
+
 
 
 def configure(app: Any, load_records: Callable[[list[str]], Awaitable[list[dict[str, Any]]]], record_usage: Callable[..., Awaitable[None]]) -> None:
@@ -229,13 +288,26 @@ async def create_draft(record: dict[str, Any], config: dict[str, Any], status_va
         raise ValueError("artifact_type is required")
     style = await get_item(STYLES_KEY, str(config.get("style_id", ""))) if config.get("style_id") else None
     generated, usage, cost = await generate_post(record, mode, style, artifact_type)
+
+    media_urls = extract_source_media(record)
+    card_hash = hashlib.sha256(f"{record.get('id', '')}:{generated['title']}:{mode}".encode()).hexdigest()[:16]
+    svg_content = generate_prompt_card_svg(generated["title"], generated["text"], record.get("tags", []), mode)
+    _cards_cache[card_hash] = svg_content
+    if _app and hasattr(_app.state, "redis"):
+        await _app.state.redis.hset("promptops:publishing:cards", card_hash, svg_content)
+    generated_card_url = f"/api/publishing/cards/{card_hash}"
+
     draft = {
         "id": new_id("draft"), "artifact_id": record.get("id"), "channel_id": config.get("channel_id", ""),
         "rule_id": config.get("id", ""), "style_id": config.get("style_id", ""), "mode": mode,
         "artifact_type": artifact_type or "", "title": generated["title"], "text": generated["text"],
         "artifact_markdown": generated.get("artifact_markdown", ""), "status": status_value, "public": False,
         "scheduled_at": None, "telegram_message_id": None, "telegram_link": "", "tokens": usage,
-        "cost_usd": round(cost, 6), "model": _app.state.provider_state.get("model", "fallback"),
+        "cost_usd": round(cost, 6), "model": _app.state.provider_state.get("model", "fallback") if _app and hasattr(_app.state, "provider_state") else "fallback",
+        "media_urls": media_urls,
+        "generated_card_url": generated_card_url,
+        "selected_media": media_urls[0] if media_urls else generated_card_url,
+        "media_mode": "source_image" if media_urls else "card",
         "source": {"id": record.get("id"), "title": record.get("title"), "summary": record.get("summary"), "source_name": record.get("source_name")},
         "history": [{"at": iso_now(), "action": "generated"}], "created_at": iso_now(), "updated_at": iso_now(),
     }
@@ -276,14 +348,60 @@ async def rate_allowed(channel_id: str, kind: str) -> bool:
     return True
 
 
-async def send(channel: dict[str, Any], text: str, idem: str, kind: str, document: str = "") -> dict[str, Any]:
+async def send(channel: dict[str, Any], text: str, idem: str, kind: str, document: str = "", media_url: str = "", media_mode: str = "auto") -> dict[str, Any]:
     idem_key = f"{SENT_PREFIX}:{hashlib.sha256(idem.encode()).hexdigest()}"
     if not await _app.state.redis.set(idem_key, "1", nx=True, ex=30 * 86400):
         raise RuntimeError("Duplicate publication blocked")
+    chat_id = channel["chat_id"]
     try:
-        result = await telegram_request("sendMessage", {"chat_id": channel["chat_id"], "text": text[:4096], "parse_mode": "HTML"})
+        result = None
+        sent_media = False
+        if media_url and media_mode != "none":
+            try:
+                if media_url.startswith("/api/publishing/temp-media/"):
+                    file_id = media_url.split("/")[-1]
+                    upload = _temp_uploads.get(file_id)
+                    if upload:
+                        filename = upload.get("filename", "image.png")
+                        content_type = upload.get("content_type", "image/png")
+                        data_bytes = upload.get("bytes", b"")
+                        if len(text) <= 1024:
+                            result = await telegram_request("sendPhoto", {"chat_id": chat_id, "caption": text[:1024], "parse_mode": "HTML"}, files={"photo": (filename, data_bytes, content_type)})
+                            sent_media = True
+                        else:
+                            result = await telegram_request("sendPhoto", {"chat_id": chat_id, "caption": text[:300] + "...", "parse_mode": "HTML"}, files={"photo": (filename, data_bytes, content_type)})
+                            await telegram_request("sendMessage", {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"})
+                            sent_media = True
+                elif media_url.startswith("/api/publishing/cards/"):
+                    card_hash = media_url.split("/")[-1]
+                    raw_svg = await _app.state.redis.hget("promptops:publishing:cards", card_hash)
+                    if not raw_svg:
+                        raw_svg = _cards_cache.get(card_hash)
+                    if raw_svg:
+                        svg_bytes = raw_svg.encode("utf-8") if isinstance(raw_svg, str) else raw_svg
+                        if len(text) <= 1024:
+                            result = await telegram_request("sendDocument", {"chat_id": chat_id, "caption": text[:1024], "parse_mode": "HTML"}, files={"document": ("prompt_card.svg", svg_bytes, "image/svg+xml")})
+                            sent_media = True
+                        else:
+                            result = await telegram_request("sendDocument", {"chat_id": chat_id, "caption": text[:300] + "...", "parse_mode": "HTML"}, files={"document": ("prompt_card.svg", svg_bytes, "image/svg+xml")})
+                            await telegram_request("sendMessage", {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"})
+                            sent_media = True
+                elif media_url.startswith(("http://", "https://")):
+                    if len(text) <= 1024:
+                        result = await telegram_request("sendPhoto", {"chat_id": chat_id, "photo": media_url, "caption": text[:1024], "parse_mode": "HTML"})
+                        sent_media = True
+                    else:
+                        text_with_link = f'<a href="{media_url}">&#8203;</a>' + text[:4090]
+                        result = await telegram_request("sendMessage", {"chat_id": chat_id, "text": text_with_link, "parse_mode": "HTML"})
+                        sent_media = True
+            except Exception as media_exc:
+                logging.warning("Failed to send media (%s), falling back to text: %s", media_url, media_exc)
+                await event("media_send_failed_fallback_text", channel_id=chat_id, media_url=media_url, error=str(media_exc))
+
+        if not sent_media:
+            result = await telegram_request("sendMessage", {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"})
         if document:
-            await telegram_request("sendDocument", {"chat_id": channel["chat_id"], "caption": "Артефакт по мотивам источника"}, {"document": ("artifact.md", document.encode(), "text/markdown")})
+            await telegram_request("sendDocument", {"chat_id": chat_id, "caption": "Артефакт по мотивам источника"}, {"document": ("artifact.md", document.encode(), "text/markdown")})
         return result
     except Exception:
         await _app.state.redis.delete(idem_key)
@@ -315,7 +433,15 @@ async def publish_draft(draft: dict[str, Any], kind: str = "manual") -> dict[str
     text = (draft.get("text", "") or "").replace("{daily_pin}", "").replace("{today_pin}", "").replace("{daily_date}", today_date)
     draft["text"] = text
 
-    result = await send(channel, html.escape(text, quote=False), f"draft:{draft['id']}:{channel['id']}", kind, draft.get("artifact_markdown", ""))
+    result = await send(
+        channel,
+        html.escape(text, quote=False),
+        f"draft:{draft['id']}:{channel['id']}",
+        kind,
+        draft.get("artifact_markdown", ""),
+        media_url=draft.get("selected_media") or draft.get("generated_card_url") or "",
+        media_mode=draft.get("media_mode", "auto"),
+    )
     draft.update({"status": "published", "telegram_message_id": result.get("message_id"), "telegram_link": message_link(channel, result.get("message_id")), "published_at": iso_now(), "updated_at": iso_now()})
     draft["history"].append({"at": iso_now(), "action": "published", "kind": kind})
     await save_item(DRAFTS_KEY, draft)
@@ -325,6 +451,7 @@ async def publish_draft(draft: dict[str, Any], kind: str = "manual") -> dict[str
         await make_public(draft)
     await event("draft_published", draft_id=draft["id"], channel_id=channel["id"], kind=kind)
     return draft
+
 
 
 async def review(record: dict[str, Any], rule: dict[str, Any], reason: str) -> None:
@@ -597,12 +724,55 @@ async def edit_draft(item_id: str, payload: dict[str, Any] = Body(...), _: str =
     item = await get_item(DRAFTS_KEY, item_id)
     if not item:
         raise HTTPException(404, "Draft not found")
-    changes = {key: value for key, value in payload.items() if key in {"title", "text", "channel_id", "style_id", "public", "artifact_markdown"}}
+    changes = {key: value for key, value in payload.items() if key in {"title", "text", "channel_id", "style_id", "public", "artifact_markdown", "media_mode", "selected_media", "media_urls"}}
     item.update(changes)
     item["updated_at"] = iso_now()
     item["history"].append({"at": iso_now(), "action": "edited", "fields": sorted(changes)})
     await save_item(DRAFTS_KEY, item)
     return JSONResponse({"ok": True, "item": item})
+
+
+@router.get("/api/publishing/cards/{card_hash}")
+async def get_publishing_card(card_hash: str) -> Response:
+    raw = None
+    if _app and hasattr(_app.state, "redis"):
+        raw = await _app.state.redis.hget("promptops:publishing:cards", card_hash)
+    if not raw and card_hash in _cards_cache:
+        raw = _cards_cache[card_hash]
+    if not raw:
+        raise HTTPException(404, "Card not found")
+    content = raw.encode("utf-8") if isinstance(raw, str) else raw
+    return Response(content=content, media_type="image/svg+xml")
+
+
+@router.post("/api/publishing/upload-media")
+async def upload_media(file: UploadFile = File(...), _: str = Depends(authenticate)) -> JSONResponse:
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 10MB)")
+    file_id = f"upload_{secrets.token_hex(8)}"
+    now_ts = utc_now().timestamp()
+    expired = [k for k, v in _temp_uploads.items() if now_ts - v.get("created_at", 0) > 3600]
+    for k in expired:
+        _temp_uploads.pop(k, None)
+    _temp_uploads[file_id] = {
+        "id": file_id,
+        "bytes": content,
+        "filename": file.filename or "image.png",
+        "content_type": file.content_type or "image/png",
+        "created_at": now_ts,
+    }
+    media_url = f"/api/publishing/temp-media/{file_id}"
+    return JSONResponse({"ok": True, "file_id": file_id, "media_url": media_url})
+
+
+@router.get("/api/publishing/temp-media/{file_id}")
+async def get_temp_media(file_id: str) -> Response:
+    upload = _temp_uploads.get(file_id)
+    if not upload:
+        raise HTTPException(404, "File not found or expired")
+    return Response(content=upload["bytes"], media_type=upload["content_type"])
+
 
 
 @router.post("/api/post-drafts/{item_id}/regenerate")

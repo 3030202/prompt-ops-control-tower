@@ -358,9 +358,29 @@ function render(){
       <span>${esc(x.status)}</span>
       <span>${x.tokens?.total_tokens||0} tok</span>
       <span>$${x.cost_usd||0}</span>
+      <span id="charCount_${x.id}" class="badge" style="color:${(x.text?.length||0)<=1024?'var(--cyan)':'var(--amber)'}">${x.text?.length||0} chars</span>
     </div>
     ${x.review_reason?`<p class="danger">${esc(x.review_reason)}</p>`:''}
-    <textarea class="draft-text" id="text_${x.id}">${esc(x.text)}</textarea>
+    <textarea class="draft-text" id="text_${x.id}" oninput="updateCharCount('${x.id}')">${esc(x.text)}</textarea>
+    
+    <div class="media-box" style="margin:10px 0;padding:10px;background:rgba(0,0,0,0.3);border:1px stroke var(--line);border-radius:4px">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+        <label style="font-size:12px;color:var(--muted)">🖼️ <b>Медиа поста:</b></label>
+        <select id="mediaMode_${x.id}" onchange="changeMediaMode('${x.id}')" style="width:auto;padding:4px 8px;font-size:12px">
+          <option value="card" ${x.media_mode==='card'?'selected':''}>SVG карточка промпта</option>
+          <option value="source_image" ${x.media_mode==='source_image'?'selected':''}>Из источника</option>
+          <option value="upload" ${x.media_mode==='upload'?'selected':''}>Загруженное фото</option>
+          <option value="none" ${x.media_mode==='none'?'selected':''}>Без медиа</option>
+        </select>
+        <input type="file" id="uploadFile_${x.id}" accept="image/*" style="display:none" onchange="handleFileUpload('${x.id}')">
+        <button class="pin-btn" onclick="document.getElementById('uploadFile_${x.id}').click()">📁 Загрузить фото</button>
+      </div>
+      
+      <div id="mediaPreview_${x.id}" style="max-height:220px;overflow:hidden;border-radius:4px;background:#050709;display:flex;align-items:center;justify-content:center">
+        ${renderMediaPreview(x)}
+      </div>
+    </div>
+
     <label class="check"><input type="checkbox" id="public_${x.id}" ${x.public?'checked':''}> public in Lite</label>
     <div class="actions">
       <button class="btn" onclick="saveDraft('${x.id}')">Save</button>
@@ -392,6 +412,67 @@ function render(){
     <div class="meta">${esc(x.created_at)} / ${esc(x.id)}</div>
     <pre>${esc(JSON.stringify(x,null,2))}</pre>
   </article>`).join(''):'<div class="empty">Событий пока нет</div>';
+}
+
+function renderMediaPreview(x){
+  const mode = x.media_mode || 'card';
+  const url = x.selected_media || x.generated_card_url || '';
+  if(mode === 'none' || !url) return '<span style="color:var(--muted);padding:12px;font-size:12px">Публикация без медиа</span>';
+  if(url.endsWith('.svg') || url.includes('/cards/')){
+    return `<object data="${esc(url)}" type="image/svg+xml" style="width:100%;max-height:200px;pointer-events:none"></object>`;
+  }
+  return `<img src="${esc(url)}" style="max-width:100%;max-height:200px;object-fit:contain" onerror="this.onerror=null;this.replaceWith('Ошибка загрузки медиа')">`;
+}
+
+function updateCharCount(id){
+  const text = $(`text_${id}`).value;
+  const el = $(`charCount_${id}`);
+  if(el){
+    const len = text.length;
+    el.textContent = `${len} chars (${len <= 1024 ? '1 photo msg' : 'photo + msg/link'})`;
+    el.style.color = len <= 1024 ? 'var(--cyan)' : 'var(--amber)';
+  }
+}
+
+async function changeMediaMode(id){
+  const mode = $(`mediaMode_${id}`).value;
+  const draft = state.drafts.find(d => d.id === id);
+  if(!draft) return;
+  draft.media_mode = mode;
+  if(mode === 'card'){
+    draft.selected_media = draft.generated_card_url;
+  } else if(mode === 'source_image'){
+    draft.selected_media = (draft.media_urls && draft.media_urls[0]) || draft.generated_card_url;
+  } else if(mode === 'none'){
+    draft.selected_media = '';
+  }
+  render();
+}
+
+async function handleFileUpload(id){
+  const input = $(`uploadFile_${id}`);
+  if(!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    toast('Загрузка файла...');
+    const r = await fetch('/api/publishing/upload-media', {
+      method: 'POST',
+      body: formData
+    });
+    if(!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    const draft = state.drafts.find(d => d.id === id);
+    if(draft){
+      draft.media_mode = 'upload';
+      draft.selected_media = res.media_url;
+      toast('Файл успешно загружен!');
+      render();
+    }
+  } catch(e){
+    toast(`Ошибка загрузки: ${e.message}`);
+  }
 }
 
 $('addChannel').onclick=async()=>{
@@ -455,7 +536,20 @@ $('addRule').onclick=async()=>{
 
 async function testChannel(id){try{await api(`/api/channels/${id}/test`,{method:'POST'});toast('Test sent')}catch(e){toast(e.message)}}
 async function syncStyle(id){try{await api(`/api/styles/${id}/sync`,{method:'POST'});toast('Style synced');await load()}catch(e){toast(e.message)}}
-async function saveDraft(id){await api(`/api/post-drafts/${id}`,{method:'PATCH',body:JSON.stringify({text:$(`text_${id}`).value,public:$(`public_${id}`).checked})})}
+async function saveDraft(id){
+  const draft = state.drafts.find(d => d.id === id);
+  await api(`/api/post-drafts/${id}`,{
+    method:'PATCH',
+    body:JSON.stringify({
+      text:$(`text_${id}`).value,
+      public:$(`public_${id}`).checked,
+      media_mode:$(`mediaMode_${id}`)?$(`mediaMode_${id}`).value:(draft?.media_mode||'card'),
+      selected_media:draft?.selected_media||''
+    })
+  });
+  toast('Draft saved!');
+}
+
 async function regenerate(id){await api(`/api/post-drafts/${id}/regenerate`,{method:'POST'});await load()}
 async function approveDraft(id){try{await saveDraft(id);await api(`/api/post-drafts/${id}/approve`,{method:'POST'});toast('Approved');await load()}catch(e){toast(e.message)}}
 async function publishDraft(id){try{await saveDraft(id);await api(`/api/post-drafts/${id}/publish`,{method:'POST'});toast('Published');await load()}catch(e){toast(e.message)}}
