@@ -46,27 +46,34 @@ def seconds_until_midnight_msk() -> int:
     return max(3600, seconds)
 
 
-def compute_deterministic_pin(date_str: str) -> str:
-    """Computes a stable 4-digit PIN for a given YYYY-MM-DD using HMAC-SHA256."""
-    h = hmac.new(DAILY_PASS_SECRET.encode("utf-8"), date_str.encode("utf-8"), hashlib.sha256).hexdigest()
-    num = int(h[:8], 16) % 10000
-    return f"{num:04d}"
+def compute_time_based_pin_prefix() -> str:
+    """Returns the 3-digit time-based PIN prefix: HH (MSK hour) + tens-of-minutes.
+
+    Example: at 16:49 MSK → '164'. Any 4th digit is accepted.
+    The prefix changes every 10 minutes.
+    """
+    now = get_moscow_now()
+    return f"{now.hour:02d}{now.minute // 10}"
 
 
-async def get_daily_pin(redis: Any, date_str: Optional[str] = None) -> str:
-    """Returns today's PIN, checking for manual Redis override first, then fallback to algorithm."""
-    target_date = date_str or get_today_date_str()
+async def get_current_pin_prefix(redis: Any) -> str:
+    """Returns the current 3-digit PIN prefix (time-based), checking Redis override first.
+
+    Redis override key: promptops:daily_pin:custom:YYYY-MM-DD  (full 4-digit PIN, takes priority).
+    """
     if redis:
         try:
+            target_date = get_today_date_str()
             custom = await redis.get(f"{CUSTOM_PIN_KEY_PREFIX}:{target_date}")
             if custom:
                 custom_str = custom.decode("utf-8") if isinstance(custom, bytes) else str(custom)
                 custom_str = custom_str.strip()
+                # Custom override is a full 4-digit PIN — validate it exactly
                 if len(custom_str) == 4 and custom_str.isdigit():
-                    return custom_str
+                    return custom_str  # will be compared as exact match in verify
         except Exception:
             pass
-    return compute_deterministic_pin(target_date)
+    return compute_time_based_pin_prefix()
 
 
 def sign_daily_token(date_str: str) -> str:
@@ -195,7 +202,15 @@ async def daily_pass_channel() -> dict[str, Any]:
 async def daily_pass_verify(
     request: Request, response: Response, payload: dict[str, Any] = Body(...)
 ) -> dict[str, Any]:
-    """Validates entered 4-digit PIN against today's PIN with rate-limiting."""
+    """Validates entered 4-digit PIN using time-based logic with rate-limiting.
+
+    PIN format:
+      - Digits 1–2 : current MSK hour (00–23)
+      - Digit 3    : tens digit of current MSK minutes (0–5)
+      - Digit 4    : any digit (always accepted)
+
+    A Redis custom override for today's date is a full 4-digit exact PIN.
+    """
     pin = str(payload.get("pin", "")).strip()
     if not pin or len(pin) != 4 or not pin.isdigit():
         raise HTTPException(
@@ -223,10 +238,18 @@ async def daily_pass_verify(
         except Exception:
             pass
 
-    today_str = get_today_date_str()
-    correct_pin = await get_daily_pin(redis, today_str)
+    expected = await get_current_pin_prefix(redis)
 
-    if pin != correct_pin:
+    # Check whether the Redis override returned a full 4-digit PIN (exact match)
+    # or the time-based 3-digit prefix (any 4th digit accepted)
+    if len(expected) == 4:
+        # Admin-set custom PIN: exact match required
+        valid = pin == expected
+    else:
+        # Time-based: first 3 digits must match, 4th is free
+        valid = pin[:3] == expected
+
+    if not valid:
         if redis:
             try:
                 pipe = redis.pipeline()
@@ -237,16 +260,17 @@ async def daily_pass_verify(
                 pass
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Неверный код доступа. Возьмите актуальный 4-значный код в Telegram-канале.",
+            detail="Неверный код. Первые 3 цифры — время по МСК (ЧЧ + десятки минут).",
         )
 
-    # Valid PIN! Clear rate limit for this IP
+    # Valid PIN — clear rate limit for this IP
     if redis:
         try:
             await redis.delete(rate_key)
         except Exception:
             pass
 
+    today_str = get_today_date_str()
     token = sign_daily_token(today_str)
     max_age = seconds_until_midnight_msk()
 
@@ -265,20 +289,18 @@ async def daily_pass_verify(
         "token": token,
         "date": today_str,
         "expires_in_seconds": max_age,
-        "message": "Доступ успешно открыт на сегодня!",
+        "message": "Доступ успешно открыт!",
     }
 
 
 @router.get("/admin/today")
 async def daily_pass_admin_today(_: str = Depends(authenticate_admin)) -> dict[str, Any]:
-    """Admin endpoint: returns today's and upcoming PINs for Telegram posting."""
+    """Admin endpoint: returns current time-based PIN info."""
     redis = getattr(_app.state, "redis", None) if _app else None
     today_str = get_today_date_str()
-    tomorrow_str = get_today_date_str(1)
+    now = get_moscow_now()
 
-    today_pin = await get_daily_pin(redis, today_str)
-    tomorrow_pin = await get_daily_pin(redis, tomorrow_str)
-
+    current_prefix = await get_current_pin_prefix(redis)
     custom_today = None
     if redis:
         try:
@@ -286,19 +308,23 @@ async def daily_pass_admin_today(_: str = Depends(authenticate_admin)) -> dict[s
         except Exception:
             pass
 
-    upcoming = []
-    for offset in range(7):
-        d_str = get_today_date_str(offset)
-        pin_val = await get_daily_pin(redis, d_str)
-        upcoming.append({"date": d_str, "pin": pin_val, "offset": offset})
+    # Show PIN prefix for each 10-minute slot of the current hour
+    slots = []
+    for tens in range(6):
+        minute_start = tens * 10
+        slots.append({
+            "time_range": f"{now.hour:02d}:{minute_start:02d}–{now.hour:02d}:{minute_start + 9:02d}",
+            "prefix": f"{now.hour:02d}{tens}",
+            "is_current": tens == now.minute // 10,
+        })
 
     return {
         "today_date": today_str,
-        "today_pin": today_pin,
-        "tomorrow_date": tomorrow_str,
-        "tomorrow_pin": tomorrow_pin,
+        "current_time_msk": now.strftime("%H:%M"),
+        "current_prefix": current_prefix,
+        "pin_hint": f"{current_prefix}X  (X — любая цифра)",
         "is_custom": bool(custom_today),
-        "upcoming": upcoming,
+        "slots_this_hour": slots,
         "channel_url": os.getenv("TELEGRAM_PUBLIC_CHANNEL", TELEGRAM_PUBLIC_CHANNEL),
     }
 

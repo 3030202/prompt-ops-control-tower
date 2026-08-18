@@ -502,7 +502,7 @@
   <div class="daily-pass-card">
     <div class="dp-badge">ACCESS CONTROL // DAILY PASS</div>
     <h2 class="dp-title">Daily Prompt Pass</h2>
-    <p class="dp-subtitle">Введите 4-значный код из сегодняшнего поста в Telegram-канале для разблокировки каталога.</p>
+    <p class="dp-subtitle">Введите 4-значный код: <strong>ЧЧ&nbsp;+&nbsp;десятки&nbsp;минут&nbsp;+&nbsp;любая&nbsp;цифра</strong>.<br>Пример: в&nbsp;16:49&nbsp;МСК&nbsp;→&nbsp;<code>164X</code></p>
     <div class="dp-inputs" id="dpInputs">
       <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp0" autofocus autocomplete="off">
       <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp1" autocomplete="off">
@@ -510,12 +510,7 @@
       <input type="text" maxlength="1" inputmode="numeric" pattern="[0-9]" class="dp-digit" id="dp3" autocomplete="off">
     </div>
     <div class="dp-error" id="dpError"></div>
-    <div class="dp-actions">
-      <a class="dp-tg-btn" id="dpTgLink" href="https://t.me/desp0tat" target="_blank" rel="noopener">
-        <span>✈️ Взять код на сегодня в Telegram</span>
-      </a>
-    </div>
-    <div class="dp-foot">Код обновляется раз в сутки (00:00 МСК). Доступ сохраняется на весь день.</div>
+    <div class="dp-foot">Первые 2 цифры — час (МСК), 3-я — десятки минут, 4-я — любая. Обновляется каждые 10 минут.</div>
   </div>
 </div>
 
