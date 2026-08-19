@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Prompt Register // Dense TUI</title>
+  <title>Prompt Register // Dense TUI & IDE</title>
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -36,7 +36,7 @@
       background-image:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(57,255,20,0.06),transparent 70%),linear-gradient(rgba(255,255,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.02) 1px,transparent 1px);
       background-size:100% 100%,32px 32px,32px 32px;
     }
-    button,input,select{font:inherit}button{color:inherit;cursor:pointer}
+    button,input,select,textarea{font:inherit}button{color:inherit;cursor:pointer}
     :focus-visible{outline:2px solid var(--acid)!important;outline-offset:1px!important}
     [hidden]{display:none!important}
     .app{height:100%;display:grid;grid-template-rows:var(--top) 1fr var(--foot)}
@@ -97,8 +97,9 @@
     .tui-dropdown-menu{
       position:absolute;top:calc(100% + 4px);right:0;width:150px;
       background:#070b08;border:1px solid var(--line2);box-shadow:0 12px 30px rgba(0,0,0,0.85);
-      border-radius:2px;z-index:50;display:flex;flex-direction:column;padding:4px 0;
+      border-radius:2px;z-index:50;display:none;flex-direction:column;padding:4px 0;
     }
+    .tui-dropdown-menu.open{display:flex}
     .tui-dropdown-item{
       padding:6px 10px;font-size:11px;color:var(--muted);cursor:pointer;
       display:flex;align-items:center;gap:6px;transition:all .1s;
@@ -132,7 +133,7 @@
       color:var(--acid);font-weight:800;white-space:nowrap;font-family:"Outfit",sans-serif;letter-spacing:.05em;
     }
     .pane-title small{color:var(--muted);font-weight:400;font-family:"JetBrains Mono",monospace;font-size:10px}
-    .pane-title .actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+    .pane-title .actions{margin-left:auto;display:flex;gap:5px;align-items:center}
     .link{
       border:1px solid transparent;background:none;color:var(--cyan);
       padding:2px 6px;font-size:11px;border-radius:2px;transition:all .12s;
@@ -257,7 +258,7 @@
     .syn-var{color:var(--amber);font-weight:700;background:rgba(255,184,0,0.1);padding:1px 3px;border-radius:2px}
     .syn-role{color:var(--acid);font-weight:700;text-shadow:0 0 6px var(--acid-glow)}
     .syn-key{color:var(--cyan)}.syn-quote{color:#d8a6ff}
-    .preview-info{max-height:45vh;overflow:auto;padding:10px 12px;background:#080c09}
+    .preview-info{max-height:48vh;overflow:auto;padding:10px 12px;background:#080c09}
     .preview-title{margin:0 0 8px;color:#f2f7f4;font-size:15px;line-height:1.3;font-family:"Outfit",sans-serif;font-weight:700}
     .mechanics{display:grid;grid-template-columns:repeat(2,1fr);gap:2px;background:var(--line);margin:8px 0}
     .mechanic{background:#090e0b;padding:7px 9px;color:#abb8b0;font-size:11px;line-height:1.45}
@@ -267,6 +268,18 @@
     .pill.mark{color:var(--acid);border-color:#2a4d38;background:rgba(57,255,20,0.06)}
     .remarks{margin:6px 0 0;padding:0;list-style:none;color:var(--amber);font-size:11px}
     .remarks li::before{content:"! ";color:var(--red)}
+
+    /* Pricing & Token Card */
+    .pricing-card{
+      margin-top:10px;padding:8px 10px;border:1px solid var(--line2);background:#060a08;border-radius:2px;
+    }
+    .pricing-head{
+      font-size:10px;font-weight:800;color:var(--cyan);margin-bottom:6px;letter-spacing:.06em;
+      display:flex;align-items:center;justify-content:space-between;
+    }
+    .pricing-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:4px 10px}
+    .price-item{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--muted)}
+    .price-item b{color:var(--acid);font-weight:700}
     
     /* Structured Footer Hotkey Bar */
     .footer{
@@ -296,11 +309,43 @@
     
     .mobile-dock{display:none}
     
-    dialog{width:min(700px,calc(100vw - 20px));max-height:86vh;padding:0;border:1px solid var(--line2);border-radius:2px;background:#070a08;color:var(--text);box-shadow:0 22px 90px #000;padding-bottom:var(--sab)}
+    dialog{width:min(720px,calc(100vw - 20px));max-height:88vh;padding:0;border:1px solid var(--line2);border-radius:2px;background:#070a08;color:var(--text);box-shadow:0 22px 90px #000;padding-bottom:var(--sab)}
     dialog::backdrop{background:#000c}
-    .dialog-head{height:34px;display:flex;align-items:center;padding:0 10px;border-bottom:1px solid var(--line2);color:var(--acid);font-weight:bold}
+    .dialog-head{height:34px;display:flex;align-items:center;padding:0 10px;border-bottom:1px solid var(--line2);color:var(--acid);font-weight:bold;font-family:"Outfit",sans-serif;letter-spacing:.05em}
     .dialog-head button{margin-left:auto;border:0;background:none;color:var(--red);font-size:16px;padding:4px 8px}
-    .dialog-body{padding:10px;overflow:auto;max-height:74vh}
+    .dialog-body{padding:12px;overflow:auto;max-height:76vh}
+    
+    /* Yank Dialog Items */
+    .yank-list{display:grid;gap:8px}
+    .yank-item{
+      display:grid;grid-template-columns:32px 1fr auto;align-items:center;gap:10px;
+      padding:10px 12px;border:1px solid var(--line);background:#090e0b;cursor:pointer;
+      border-radius:2px;transition:all .12s;
+    }
+    .yank-item:hover{border-color:var(--acid);background:#101812}
+    .yank-item kbd{color:var(--acid);font-weight:bold;font-size:12px}
+    .yank-item .yank-title{font-weight:700;color:var(--text);font-size:12px}
+    .yank-item .yank-desc{color:var(--muted);font-size:10px;margin-top:2px}
+
+    /* Playground Styles */
+    .playground-grid{display:grid;grid-template-columns:260px 1fr;gap:12px}
+    .playground-config{display:flex;flex-direction:column;gap:8px;border-right:1px solid var(--line);padding-right:12px}
+    .pg-label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+    .pg-input,.pg-select{
+      width:100%;height:28px;background:#030504;border:1px solid var(--line2);
+      color:var(--text);padding:0 8px;border-radius:2px;font-size:11px;
+    }
+    .pg-input:focus,.pg-select:focus{border-color:var(--acid);outline:0}
+    .pg-vars-box{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+    .pg-output-box{display:flex;flex-direction:column;gap:6px}
+    .pg-output{
+      min-height:220px;max-height:340px;overflow:auto;background:#020403;
+      border:1px solid var(--line2);padding:10px 12px;color:#d6ded8;
+      white-space:pre-wrap;font-size:12px;line-height:1.5;border-radius:2px;
+    }
+    .pg-telemetry{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--muted);padding:4px 0}
+    .pg-telemetry b{color:var(--acid)}
+
     .register-list{display:grid;gap:6px}
     .register-option{display:grid;grid-template-columns:26px 1fr auto;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);background:#090e0b;cursor:pointer}
     .register-option.active{border-color:var(--register-color);background:#0e1511}
@@ -314,7 +359,7 @@
     .help-grid{display:grid;grid-template-columns:90px 1fr;gap:6px 12px;font-size:11px}
     .help-grid kbd{color:var(--amber)}
     .export-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-    .action-btn{min-height:38px;border:1px solid var(--line2);background:#0c120e;color:var(--text);padding:6px 12px;font-weight:700}
+    .action-btn{min-height:36px;border:1px solid var(--line2);background:#0c120e;color:var(--text);padding:6px 12px;font-weight:700;border-radius:2px;transition:all .12s}
     .action-btn:hover,.action-btn:active{border-color:var(--acid);color:var(--acid);background:#131c16}
     .action-btn.primary{background:var(--acid);color:#041008;border-color:var(--acid)}
     .analysis-result{white-space:pre-wrap;color:#b9c7be;font-size:11px;background:#020403;padding:8px;border:1px solid var(--line)}
@@ -362,6 +407,8 @@
       .mechanics{grid-template-columns:1fr}
       
       .footer{display:none}
+      .playground-grid{grid-template-columns:1fr}
+      .playground-config{border-right:0;border-bottom:1px solid var(--line);padding-right:0;padding-bottom:12px}
       
       .mobile-dock{
         display:grid;grid-template-columns:repeat(4,1fr);align-items:stretch;
@@ -387,7 +434,7 @@
 <div class="app">
   <header class="topbar">
     <div class="brand"><i class="logo-icon"></i><span>8::</span>PROMPTS</div>
-    <label class="searchbox"><b>/</b><input id="search" type="search" autocomplete="off" placeholder="filter / semantic search"></label>
+    <label class="searchbox"><b>/</b><input id="search" type="search" autocomplete="off" placeholder="search (try tag:python cmp:>60 type:agent)"></label>
     <div class="filter-chips" id="filterChips"></div>
     
     <!-- TUI Command Selector for Sorting -->
@@ -455,9 +502,10 @@
         <button class="link btn-back" onclick="setPane(2)">← LIST</button>
         <span>[3] INSPECT</span><small id="previewSerial">-</small>
         <div class="actions">
-          <button class="link" id="btnCopyPrompt" data-command="copy">[c] copy</button>
-          <button class="link" data-command="toggle-mark">[space] mark</button>
-          <button class="link" data-command="analyze">[a] ai</button>
+          <button class="link" id="btnYankPrompt" data-command="yank" title="Multi-format copy [y]">[y] yank</button>
+          <button class="link" id="btnPlayground" data-command="playground" title="Open Interactive Playground [Ctrl+P]">[play] run</button>
+          <button class="link" data-command="toggle-mark" title="Toggle mark in register [Space]">[space] mark</button>
+          <button class="link" data-command="analyze" title="AI Analysis [a]">[a] ai</button>
         </div>
       </div>
       
@@ -469,10 +517,10 @@
           <div class="zero-state-guide">
             <div class="guide-item"><kbd>j</kbd><kbd>k</kbd> <span>Navigate rows</span></div>
             <div class="guide-item"><kbd>/</kbd> <span>Filter / search</span></div>
+            <div class="guide-item"><kbd>y</kbd> <span>Yank (Multi-format copy)</span></div>
+            <div class="guide-item"><kbd>p</kbd> <span>BYOK Playground</span></div>
             <div class="guide-item"><kbd>Space</kbd> <span>Mark into register</span></div>
             <div class="guide-item"><kbd>r</kbd> <span>Switch register (1-5)</span></div>
-            <div class="guide-item"><kbd>c</kbd> <span>Quick copy prompt</span></div>
-            <div class="guide-item"><kbd>?</kbd> <span>Full command keymap</span></div>
           </div>
           <div class="zero-state-skeleton">
             <div class="skel-line w80"></div>
@@ -508,6 +556,21 @@
             <div class="mechanic"><b>EXPECTED OUTPUT</b><span id="pOutput">-</span></div>
             <div class="mechanic"><b>LEARNING</b><span id="pLearning">-</span></div>
           </div>
+          
+          <!-- Pricing & Cost Calculator -->
+          <div class="pricing-card" id="pricingCard">
+            <div class="pricing-head">
+              <span>ESTIMATED EXECUTION COST</span>
+              <span style="color:var(--muted);font-weight:normal" id="calcTokenBasis">per run</span>
+            </div>
+            <div class="pricing-grid">
+              <div class="price-item"><span>GPT-4o:</span> <b id="priceGpt4o">$0.000</b></div>
+              <div class="price-item"><span>Claude 3.5 Sonnet:</span> <b id="priceClaude">$0.000</b></div>
+              <div class="price-item"><span>DeepSeek-V3/R1:</span> <b id="priceDeepseek">$0.000</b></div>
+              <div class="price-item"><span>Llama 3.3 70B:</span> <b id="priceLlama">$0.000</b></div>
+            </div>
+          </div>
+
           <div class="metadata-line"><b>REGISTERS</b> <span id="pRegisters">-</span></div>
           <div class="metadata-line"><b>TAGS</b> <span id="pTags">-</span></div>
           <div class="metadata-line"><b>MARKS</b> <span id="pMarks">-</span></div>
@@ -529,8 +592,8 @@
       <span class="footer-badge act">ACT</span>
       <span class="hotkey"><b>Space</b> Mark</span>
       <span class="hotkey"><b>r</b> Register</span>
-      <span class="hotkey"><b>v</b> Range</span>
-      <span class="hotkey"><b>c</b> Copy</span>
+      <span class="hotkey"><b>y</b> Yank</span>
+      <span class="hotkey"><b>p</b> Play</span>
       <span class="hotkey"><b>e</b> Export</span>
     </div>
     <div class="footer-sep"></div>
@@ -570,6 +633,104 @@
     </button>
   </nav>
 </div>
+
+<!-- Yank Dialog -->
+<dialog id="yankDialog">
+  <div class="dialog-head">YANK_PROMPT // Multi-format copy<button data-close>×</button></div>
+  <div class="dialog-body">
+    <div class="yank-list" id="yankList">
+      <div class="yank-item" onclick="executeYank('raw')">
+        <kbd>[1]</kbd>
+        <div>
+          <div class="yank-title">Raw Prompt Text</div>
+          <div class="yank-desc">Clean unmodified prompt string</div>
+        </div>
+        <button class="action-btn">COPY</button>
+      </div>
+      <div class="yank-item" onclick="executeYank('openai')">
+        <kbd>[2]</kbd>
+        <div>
+          <div class="yank-title">OpenAI Messages JSON</div>
+          <div class="yank-desc">Array with system/user messages payload</div>
+        </div>
+        <button class="action-btn">COPY</button>
+      </div>
+      <div class="yank-item" onclick="executeYank('langchain')">
+        <kbd>[3]</kbd>
+        <div>
+          <div class="yank-title">Python LangChain Template</div>
+          <div class="yank-desc">PromptTemplate.from_template(...) snippet</div>
+        </div>
+        <button class="action-btn">COPY</button>
+      </div>
+      <div class="yank-item" onclick="executeYank('vercelaissdk')">
+        <kbd>[4]</kbd>
+        <div>
+          <div class="yank-title">TypeScript Vercel AI SDK</div>
+          <div class="yank-desc">generateText / streamText snippet</div>
+        </div>
+        <button class="action-btn">COPY</button>
+      </div>
+      <div class="yank-item" onclick="executeYank('anthropic')">
+        <kbd>[5]</kbd>
+        <div>
+          <div class="yank-title">Anthropic Claude JSON</div>
+          <div class="yank-desc">Messages API format with system prompt</div>
+        </div>
+        <button class="action-btn">COPY</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- Interactive BYOK Playground Dialog -->
+<dialog id="playgroundDialog" style="width:min(920px,calc(100vw - 20px))">
+  <div class="dialog-head">BYOK_PLAYGROUND // Live Execution & Variables<button data-close>×</button></div>
+  <div class="dialog-body">
+    <div class="playground-grid">
+      <!-- Left Config -->
+      <div class="playground-config">
+        <div class="pg-label">Provider Preset</div>
+        <select class="pg-select" id="pgProvider" onchange="onPlaygroundProviderChange()">
+          <option value="openai">OpenAI (api.openai.com)</option>
+          <option value="openrouter">OpenRouter (openrouter.ai)</option>
+          <option value="anthropic">Anthropic (api.anthropic.com)</option>
+          <option value="ollama">Local Ollama (localhost:11434)</option>
+          <option value="custom">Custom OpenAI-compatible</option>
+        </select>
+        
+        <div class="pg-label">Base URL</div>
+        <input class="pg-input" id="pgBaseUrl" value="https://api.openai.com/v1" placeholder="API Base URL">
+        
+        <div class="pg-label">Model</div>
+        <input class="pg-input" id="pgModel" value="gpt-4o" placeholder="Model identifier">
+        
+        <div class="pg-label">API Key (Saved locally in browser)</div>
+        <input class="pg-input" id="pgApiKey" type="password" placeholder="sk-..." autocomplete="off">
+        
+        <div class="pg-label" style="margin-top:4px">Template Variables</div>
+        <div class="pg-vars-box" id="pgVarsBox">
+          <div style="font-size:11px;color:var(--muted)">No variables detected in prompt.</div>
+        </div>
+      </div>
+      
+      <!-- Right Output & Execution -->
+      <div class="pg-output-box">
+        <button class="action-btn primary" id="btnPgRun" onclick="runPlaygroundPrompt()">[ RUN PROMPT // Ctrl+Enter ]</button>
+        <div class="pg-telemetry">
+          <span>STATUS: <b id="pgStatus">IDLE</b></span>
+          <span>LATENCY: <b id="pgLatency">-</b></span>
+          <span>TOKENS: <b id="pgTokens">-</b></span>
+        </div>
+        <pre class="pg-output" id="pgOutput">// Model response will stream here...</pre>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="action-btn" onclick="copyPlaygroundOutput()">COPY OUTPUT</button>
+          <button class="action-btn" onclick="clearPlaygroundOutput()">CLEAR</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</dialog>
 
 <dialog id="registerDialog">
   <div class="dialog-head">REGISTER_PICKER // 1-5 select<button data-close>×</button></div>
@@ -623,12 +784,12 @@
 </dialog>
 
 <script>
-const STORAGE_KEY="prompt-register-workspace.v1",PAGE_SIZE=200;
+const STORAGE_KEY="prompt-register-workspace.v1", BYOK_STORAGE_KEY="promptops_byok_keys.v1", PAGE_SIZE=200;
 const getRowHeight=()=>window.innerWidth<=900?68:24;
 const DEFAULT_REGISTERS=[
  {id:"keep",name:"KEEP",color:"#57ff8f",key:"K"},{id:"review",name:"REVIEW",color:"#ffc857",key:"V"},{id:"drop",name:"DROP",color:"#ff5b5b",key:"D"},{id:"research",name:"RESEARCH",color:"#58d6ff",key:"S"},{id:"remix",name:"REMIX",color:"#ff68d4",key:"M"}
 ];
-const state={items:[],displayItems:[],total:0,facets:{types:{},tags:{},complexity:{},literacy:{}},cursor:0,pane:1,activeRegister:"keep",registers:{},filters:{registers:new Set(),types:new Set(),tags:new Set(),complexity:new Set(),literacy:new Set()},detailCache:new Map(),visualAnchor:null,treeVisible:true,previewVisible:true,commandCursor:0,requestId:0,authHeader:"",sort:"newest"};
+const state={items:[],displayItems:[],total:0,facets:{types:{},tags:{},complexity:{},literacy:{}},cursor:0,pane:1,activeRegister:"keep",registers:{},filters:{registers:new Set(),types:new Set(),tags:new Set(),complexity:new Set(),literacy:new Set()},detailCache:new Map(),visualAnchor:null,treeVisible:true,previewVisible:true,commandCursor:0,requestId:0,authHeader:"",sort:"newest",byok:{}};
 const $=id=>document.getElementById(id),esc=(v="")=>String(v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 const cmpScoreClass=n=>n>70?"score-high":n>35?"score-mid":"score-low";
@@ -652,6 +813,9 @@ function loadLocal(){
       state.previewVisible=saved.layout?.previewVisible!==false;
     }
   }catch{}
+  try{
+    state.byok=JSON.parse(localStorage.getItem(BYOK_STORAGE_KEY)||"{}");
+  }catch{}
   syncLayout();
 }
 function saveLocal(){
@@ -661,6 +825,9 @@ function saveLocal(){
     registers:Object.fromEntries(Object.entries(state.registers).map(([id,r])=>[id,{name:r.name,serials:[...r.serials]}])),
     layout:{treeVisible:state.treeVisible,previewVisible:state.previewVisible}
   }));
+}
+function saveBYOK(){
+  localStorage.setItem(BYOK_STORAGE_KEY,JSON.stringify(state.byok));
 }
 function syncLayout(){
   $("workspace").classList.toggle("tree-hidden",!state.treeVisible);
@@ -808,13 +975,66 @@ function renderVirtual(){
   });
   renderFooter();
 }
+
+/* Advanced Query Filter Parser */
+function parseQueryOperators(rawQuery){
+  const tokens=rawQuery.trim().split(/\s+/);
+  const operators={tag:[],type:[],cmp:null,lit:null,tok:null,reg:[]};
+  const textWords=[];
+  for(const token of tokens){
+    if(!token)continue;
+    const colon=token.indexOf(":");
+    if(colon>0){
+      const key=token.slice(0,colon).toLowerCase();
+      const val=token.slice(colon+1);
+      if(key==="tag"||key==="tags")operators.tag.push(val.toLowerCase());
+      else if(key==="type")operators.type.push(val.toLowerCase());
+      else if(key==="cmp")operators.cmp=val;
+      else if(key==="lit")operators.lit=val;
+      else if(key==="tok"||key==="in")operators.tok=val;
+      else if(key==="reg"||key==="register")operators.reg.push(val.toLowerCase());
+      else textWords.push(token);
+    }else{
+      textWords.push(token);
+    }
+  }
+  return {operators,textQuery:textWords.join(" ")};
+}
+
+function matchNumOperator(actual,rule){
+  if(!rule)return true;
+  if(rule.startsWith(">=")){return actual>=Number(rule.slice(2))}
+  if(rule.startsWith("<=")){return actual<=Number(rule.slice(2))}
+  if(rule.startsWith(">")){return actual>Number(rule.slice(1))}
+  if(rule.startsWith("<")){return actual<Number(rule.slice(1))}
+  return actual===Number(rule);
+}
+
 function applyLocalFilters(){
   const previous=current()?.serial;
+  const {operators,textQuery}=parseQueryOperators($("search").value);
+
   state.displayItems=state.items.filter(item=>{
     if(state.filters.registers.size&&! [...state.filters.registers].some(id=>state.registers[id]?.serials.has(item.serial)))return false;
     const cmp=bucket(item.complexity,[40,60,80],["0-39","40-59","60-79","80-100"]),lit=bucket(item.literacy_score,[50,70,85],["0-49","50-69","70-84","85-100"]);
     if(state.filters.complexity.size&&!state.filters.complexity.has(cmp))return false;
     if(state.filters.literacy.size&&!state.filters.literacy.has(lit))return false;
+    
+    // Operator filters
+    if(operators.tag.length&&!operators.tag.every(t=>(item.tags||[]).some(tag=>tag.toLowerCase().includes(t))))return false;
+    if(operators.type.length&&!operators.type.some(t=>(item.prompt_type||"").toLowerCase().includes(t)))return false;
+    if(operators.reg.length&&!operators.reg.some(rName=>Object.values(state.registers).some(r=>(r.id.toLowerCase()===rName||r.name.toLowerCase()===rName)&&r.serials.has(item.serial))))return false;
+    if(operators.cmp&&!matchNumOperator(item.complexity,operators.cmp))return false;
+    if(operators.lit&&!matchNumOperator(item.literacy_score,operators.lit))return false;
+    if(operators.tok&&!matchNumOperator(item.token_estimate?.total?.max||item.token_estimate?.input?.max||0,operators.tok))return false;
+
+    // Free text match if any
+    if(textQuery){
+      const q=textQuery.toLowerCase();
+      const match=item.title?.toLowerCase().includes(q)||item.serial?.toLowerCase().includes(q)||(item.tags||[]).some(t=>t.toLowerCase().includes(q));
+      if(!match)return false;
+    }
+
     return true;
   });
   const oldIndex=state.displayItems.findIndex(x=>x.serial===previous);
@@ -874,9 +1094,10 @@ async function apiFetch(url,options={}){
 async function loadPrompts(){
   const requestId=++state.requestId;
   setStatus("LOADING",0);
+  const {textQuery}=parseQueryOperators($("search").value);
   const query=new URLSearchParams({
     view:"compact",limit:String(PAGE_SIZE),offset:"0",
-    q:$("search").value,sort:state.sort,
+    q:textQuery,sort:state.sort,
     tags:[...state.filters.tags].join(","),
     types:[...state.filters.types].join(","),
     complexity_buckets:[...state.filters.complexity].join(","),
@@ -948,6 +1169,25 @@ async function loadCurrentDetail(){
 function richText(value){
   return esc(value||"-").replace(/(Логика:|генерирует|сопоставляет|разбирает|создаёт|формирует|ограничения|результат)/gi,'<span class="syn-key">$1</span>').replace(/(\{[^}]+\}|&lt;[A-Za-z_][^&]*?&gt;)/g,'<span class="syn-var">$1</span>');
 }
+
+/* Pricing Calculation Helper */
+function calculatePricing(tokens){
+  const inTok=tokens?.input?.max||tokens?.input?.avg||tokens?.total?.max||400;
+  const outTok=tokens?.output?.max||tokens?.output?.avg||tokens?.total?.max||600;
+  
+  // Rate: In/Out per 1M tokens
+  const costGpt4o = (inTok * 2.50 + outTok * 10.00) / 1000000;
+  const costClaude = (inTok * 3.00 + outTok * 15.00) / 1000000;
+  const costDeepseek = (inTok * 0.14 + outTok * 0.28) / 1000000;
+  const costLlama = (inTok * 0.15 + outTok * 0.60) / 1000000;
+
+  $("calcTokenBasis").textContent=`~${inTok} in / ~${outTok} out`;
+  $("priceGpt4o").textContent = `$${costGpt4o.toFixed(4)}`;
+  $("priceClaude").textContent = `$${costClaude.toFixed(4)}`;
+  $("priceDeepseek").textContent = `$${costDeepseek.toFixed(5)}`;
+  $("priceLlama").textContent = `$${costLlama.toFixed(5)}`;
+}
+
 function renderDetail(item){
   const zeroState=$("zeroStateContainer"), populated=$("populatedInspect");
   if(!item){
@@ -980,6 +1220,8 @@ function renderDetail(item){
   $("pTags").innerHTML=(item.tags||[]).map(x=>`<span class="pill">#${esc(x)}</span>`).join("")||"-";
   $("pMarks").innerHTML=(item.special_marks||[]).map(x=>`<span class="pill mark">${esc(x)}</span>`).join("")||"-";
   $("pRemarks").innerHTML=(item.remarks||[]).map(x=>`<li>${esc(x)}</li>`).join("")||"<li>Без критических замечаний.</li>";
+  
+  calculatePricing(tokens);
   renderPreviewRegisters();
 }
 function renderPreviewRegisters(){
@@ -1021,10 +1263,11 @@ function selectRegister(id){
 const SORT_LABELS={newest:"newest",oldest:"oldest",serial:"serial",title:"title",complexity:"complexity ↓",literacy:"literacy ↓"};
 function toggleSortDropdown(force){
   const menu=$("sortMenu"),btn=$("sortTrigger");
-  const show=force!==undefined?force:menu.hidden;
-  menu.hidden=!show;
-  btn.classList.toggle("open",show);
-  btn.setAttribute("aria-expanded",String(show));
+  const isOpen=force!==undefined?force:!menu.classList.contains("open");
+  menu.classList.toggle("open",isOpen);
+  menu.hidden=!isOpen;
+  btn.classList.toggle("open",isOpen);
+  btn.setAttribute("aria-expanded",String(isOpen));
 }
 function selectSort(sortVal){
   state.sort=sortVal;
@@ -1045,19 +1288,261 @@ document.addEventListener("click",e=>{
   if(!e.target.closest("#sortDropdown"))toggleSortDropdown(false);
 });
 
+/* =========================================================
+   YANK MENU (MULTI-FORMAT EXPORT)
+========================================================= */
+function openYankMenu(){
+  const item=current();
+  if(!item){setStatus("SELECT_PROMPT_FIRST",0);return}
+  $("yankDialog").showModal();
+}
+async function executeYank(format){
+  const item=current();
+  if(!item)return;
+  try{
+    const detail=await detailFor(item);
+    const body=detail.prompt_body||"";
+    let formattedText="";
+    
+    if(format==="raw"){
+      formattedText=body;
+    }else if(format==="openai"){
+      formattedText=JSON.stringify([
+        {role:"system",content:body},
+        {role:"user",content:"Hello"}
+      ],null,2);
+    }else if(format==="langchain"){
+      formattedText=`from langchain_core.prompts import PromptTemplate\n\nprompt = PromptTemplate.from_template(\n    """${body}"""\n)\n`;
+    }else if(format==="vercelaissdk"){
+      formattedText=`import { generateText } from "ai";\nimport { openai } from "@ai-sdk/openai";\n\nconst { text } = await generateText({\n  model: openai("gpt-4o"),\n  prompt: \`${body.replace(/`/g,"\\`")}\`,\n});\n`;
+    }else if(format==="anthropic"){
+      formattedText=JSON.stringify({
+        model:"claude-3-5-sonnet-20241022",
+        max_tokens:4096,
+        system:body,
+        messages:[{role:"user",content:"Hello"}]
+      },null,2);
+    }
+    
+    await navigator.clipboard.writeText(formattedText);
+    $("yankDialog").close();
+    setStatus(`YANKED [${format.toUpperCase()}]`);
+  }catch(e){
+    setStatus(`YANK_ERROR ${e.message}`,0);
+  }
+}
+
+/* =========================================================
+   INTERACTIVE BYOK PLAYGROUND
+========================================================= */
+const PROVIDER_PRESETS={
+  openai:{url:"https://api.openai.com/v1",model:"gpt-4o"},
+  openrouter:{url:"https://openrouter.ai/api/v1",model:"deepseek/deepseek-r1"},
+  anthropic:{url:"https://api.anthropic.com/v1/messages",model:"claude-3-5-sonnet-20241022"},
+  ollama:{url:"http://localhost:11434/v1",model:"llama3.2"},
+  custom:{url:"https://api.example.com/v1",model:"custom-model"}
+};
+
+function onPlaygroundProviderChange(){
+  const prov=$("pgProvider").value;
+  const cfg=PROVIDER_PRESETS[prov];
+  if(cfg){
+    $("pgBaseUrl").value=cfg.url;
+    $("pgModel").value=cfg.model;
+  }
+  const savedKey=state.byok[prov]||"";
+  $("pgApiKey").value=savedKey;
+}
+
+function extractTemplateVariables(text){
+  const vars=new Set();
+  const re=/\{\{([a-zA-Z0-9_-]+)\}\}|\{([a-zA-Z0-9_-]+)\}|<([a-zA-Z0-9_-]+)>/g;
+  let match;
+  while((match=re.exec(text))!==null){
+    const v=match[1]||match[2]||match[3];
+    if(v&&!["role","system","user","assistant","input","output"].includes(v.toLowerCase())){
+      vars.add(v);
+    }
+  }
+  return [...vars];
+}
+
+async function openPlayground(){
+  const item=current();
+  if(!item){setStatus("SELECT_PROMPT_FIRST",0);return}
+  const detail=await detailFor(item);
+  state.currentPgPrompt=detail.prompt_body;
+  
+  onPlaygroundProviderChange();
+  
+  // Render template variables
+  const vars=extractTemplateVariables(detail.prompt_body);
+  const vBox=$("pgVarsBox");
+  if(vars.length){
+    vBox.innerHTML=vars.map(v=>`
+      <div>
+        <span class="pg-label" style="color:var(--amber)">{{${esc(v)}}}</span>
+        <input class="pg-input pg-var-input" data-var="${esc(v)}" placeholder="Value for ${esc(v)}">
+      </div>
+    `).join("");
+  }else{
+    vBox.innerHTML='<div style="font-size:11px;color:var(--muted)">No template variables detected.</div>';
+  }
+  
+  $("pgOutput").textContent="// Ready to execute prompt...";
+  $("pgStatus").textContent="IDLE";
+  $("pgLatency").textContent="-";
+  $("pgTokens").textContent="-";
+  $("playgroundDialog").showModal();
+}
+
+async function runPlaygroundPrompt(){
+  const btn=$("btnPgRun");
+  btn.disabled=true;
+  $("pgStatus").textContent="STREAMING...";
+  $("pgStatus").style.color="var(--acid)";
+  $("pgOutput").textContent="";
+  
+  const startTime=performance.now();
+  const prov=$("pgProvider").value;
+  const baseUrl=$("pgBaseUrl").value.replace(/\/+$/,"");
+  const model=$("pgModel").value.trim();
+  const apiKey=$("pgApiKey").value.trim();
+  
+  // Save key locally
+  if(apiKey){
+    state.byok[prov]=apiKey;
+    saveBYOK();
+  }
+  
+  // Substitute variables
+  let finalPrompt=state.currentPgPrompt||"";
+  document.querySelectorAll(".pg-var-input").forEach(inp=>{
+    const vName=inp.dataset.var;
+    const vVal=inp.value||`[${vName}]`;
+    finalPrompt=finalPrompt.replaceAll(`{{${vName}}}`,vVal).replaceAll(`{${vName}}`,vVal).replaceAll(`<${vName}>`,vVal);
+  });
+  
+  try{
+    if(prov==="anthropic"){
+      // Anthropic direct call
+      const res=await fetch(baseUrl,{
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "x-api-key":apiKey,
+          "anthropic-version":"2023-06-01",
+          "dangerously-allow-browser":"true"
+        },
+        body:JSON.stringify({
+          model,
+          max_tokens:2048,
+          messages:[{role:"user",content:finalPrompt}],
+          stream:true
+        })
+      });
+      if(!res.ok)throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      
+      const reader=res.body.getReader();
+      const decoder=new TextDecoder();
+      let fullText="";
+      while(true){
+        const {done,value}=await reader.read();
+        if(done)break;
+        const chunk=decoder.decode(value,{stream:true});
+        const lines=chunk.split("\n");
+        for(const line of lines){
+          if(line.startsWith("data: ")){
+            try{
+              const data=JSON.parse(line.slice(6));
+              if(data.delta?.text){
+                fullText+=data.delta.text;
+                $("pgOutput").textContent=fullText;
+              }
+            }catch{}
+          }
+        }
+      }
+    }else{
+      // Standard OpenAI / OpenRouter / Ollama / Custom compatible endpoint
+      const endpoint=`${baseUrl}/chat/completions`;
+      const headers={"Content-Type":"application/json"};
+      if(apiKey)headers.Authorization=`Bearer ${apiKey}`;
+      
+      const res=await fetch(endpoint,{
+        method:"POST",
+        headers,
+        body:JSON.stringify({
+          model,
+          messages:[
+            {role:"system",content:"You are a helpful AI assistant executing a prompt benchmark."},
+            {role:"user",content:finalPrompt}
+          ],
+          stream:true
+        })
+      });
+      if(!res.ok)throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      
+      const reader=res.body.getReader();
+      const decoder=new TextDecoder();
+      let fullText="";
+      while(true){
+        const {done,value}=await reader.read();
+        if(done)break;
+        const chunk=decoder.decode(value,{stream:true});
+        const lines=chunk.split("\n");
+        for(const line of lines){
+          if(line.startsWith("data: ")){
+            const payloadStr=line.slice(6).trim();
+            if(payloadStr==="[DONE]")break;
+            try{
+              const data=JSON.parse(payloadStr);
+              const delta=data.choices?.[0]?.delta?.content||"";
+              fullText+=delta;
+              $("pgOutput").textContent=fullText;
+            }catch{}
+          }
+        }
+      }
+    }
+    
+    const elapsed=Math.round(performance.now()-startTime);
+    $("pgStatus").textContent="DONE";
+    $("pgStatus").style.color="var(--acid)";
+    $("pgLatency").textContent=`${elapsed} ms`;
+    $("pgTokens").textContent=`~${Math.round($("pgOutput").textContent.length/4)} tok`;
+  }catch(err){
+    $("pgStatus").textContent="ERROR";
+    $("pgStatus").style.color="var(--red)";
+    $("pgOutput").textContent=`EXECUTION_ERROR: ${err.message}`;
+  }finally{
+    btn.disabled=false;
+  }
+}
+
+function copyPlaygroundOutput(){
+  navigator.clipboard.writeText($("pgOutput").textContent);
+  setStatus("OUTPUT COPIED");
+}
+function clearPlaygroundOutput(){
+  $("pgOutput").textContent="";
+  $("pgStatus").textContent="IDLE";
+}
+
 const COMMANDS=[
  ["1","Focus groups",()=>setPane(1)],
  ["2","Focus prompts",()=>setPane(2)],
  ["3","Focus preview",()=>setPane(3)],
  ["/","Search prompts",()=>$("search").focus()],
  ["s","Sort selector",()=>toggleSortDropdown()],
+ ["y","Yank menu (Multi-format copy)",openYankMenu],
+ ["p","Interactive BYOK Playground",openPlayground],
  ["r","Select color register",openRegisters],
  ["Space","Toggle mark",()=>toggleMark()],
  ["v","Visual range",toggleVisual],
  ["e","Export registers",openExport],
  ["a","Analyze active register",openAnalysis],
  ["b","Toggle groups pane",toggleTree],
- ["p","Toggle preview pane",togglePreview],
  ["c","Copy prompt body",copyCurrent],
  ["?","Show keymap",openHelp]
 ];
@@ -1096,13 +1581,6 @@ async function copyCurrent(){
     const detail=await detailFor(item);
     await navigator.clipboard.writeText(detail.prompt_body);
     setStatus("COPIED!");
-    const btn=$("btnCopyPrompt");
-    if(btn){
-      const old=btn.textContent;
-      btn.textContent="✓ COPIED";
-      btn.style.color="var(--acid)";
-      setTimeout(()=>{btn.textContent=old;btn.style.color=""},1600);
-    }
   }catch(error){
     setStatus(`COPY_ERROR ${error.message}`,0);
   }
@@ -1201,6 +1679,7 @@ function closeTop(){
   return false;
 }
 function clearFilters(){
+  $("search").value="";
   for(const set of Object.values(state.filters))set.clear();
   loadPrompts();
 }
@@ -1209,6 +1688,12 @@ function handleKey(e){
   const dialog=[...document.querySelectorAll("dialog")].find(d=>d.open);
   if(e.key==="Escape"){if(closeTop())e.preventDefault();return}
   if(dialog===$("registerDialog")&&/^[1-5]$/.test(e.key)){e.preventDefault();selectRegister(DEFAULT_REGISTERS[Number(e.key)-1].id);return}
+  if(dialog===$("yankDialog")&&/^[1-5]$/.test(e.key)){
+    e.preventDefault();
+    const formats=["raw","openai","langchain","vercelaissdk","anthropic"];
+    executeYank(formats[Number(e.key)-1]);
+    return;
+  }
   if(dialog===$("commandDialog")){
     if(e.key==="ArrowDown"||e.key==="j"){e.preventDefault();state.commandCursor++;renderCommands()}
     else if(e.key==="ArrowUp"||e.key==="k"){e.preventDefault();state.commandCursor--;renderCommands()}
@@ -1219,8 +1704,14 @@ function handleKey(e){
     }
     return;
   }
+  if(dialog===$("playgroundDialog")&&(e.ctrlKey||e.metaKey)&&e.key==="Enter"){
+    e.preventDefault();
+    runPlaygroundPrompt();
+    return;
+  }
   if(dialog||isTyping())return;
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();openCommands();return}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="p"){e.preventDefault();openPlayground();return}
   const key=e.key;
   if(key==="1"||key==="2"||key==="3"){setPane(Number(key))}
   else if(key==="j"||key==="ArrowDown"){e.preventDefault();move(1)}
@@ -1234,6 +1725,8 @@ function handleKey(e){
   else if(key==="u"){toggleMark(true)}
   else if(key==="/"){e.preventDefault();$("search").focus()}
   else if(key==="s"){e.preventDefault();toggleSortDropdown()}
+  else if(key==="y"){openYankMenu()}
+  else if(key==="p"){openPlayground()}
   else if(key===":" ){openCommands()}
   else if(key==="?"){openHelp()}
   else if(key==="r"){openRegisters()}
@@ -1241,7 +1734,6 @@ function handleKey(e){
   else if(key==="a"){openAnalysis()}
   else if(key==="c"){copyCurrent()}
   else if(key==="b"){toggleTree()}
-  else if(key==="p"){togglePreview()}
   else if(key==="Enter"){setPane(3);loadCurrentDetail()}
 }
 let searchTimer;
@@ -1255,6 +1747,8 @@ const NAMED_COMMANDS={
   registers:openRegisters,
   "export-active":openExport,
   copy:copyCurrent,
+  yank:openYankMenu,
+  playground:openPlayground,
   analyze:openAnalysis,
   "toggle-mark":()=>toggleMark()
 };
