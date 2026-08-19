@@ -7,23 +7,13 @@
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300..800;1,300..800&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300..800;1,300..800&family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
   <style>
     :root{
-      --bg:#030504;--panel:#080d0a;--panel2:#0d1410;--line:#1c2820;--line2:#2e4436;
-      --text:#f0f7f3;--muted:#8fa699;--muted-dim:#55695e;--acid:#39ff14;--acid-glow:rgba(57,255,20,0.25);
+      --bg:#030504;--panel:#080d0a;--panel2:#0d1410;--line:#1c2820;--line2:#2a3d31;
+      --text:#e2ede6;--muted:#6f8578;--acid:#39ff14;--acid-glow:rgba(57,255,20,0.25);
       --amber:#ffb800;--red:#ff4757;--cyan:#00f0ff;--cyan-glow:rgba(0,240,255,0.25);
-      --magenta:#ff44cc;
-      
-      /* WCAG & Semantic Score Tokens */
-      --cmp-low:#10b981;   /* Emerald (0-35) */
-      --cmp-mid:#f59e0b;   /* Amber (36-70) */
-      --cmp-high:#ef4444;  /* Crimson (71-100) */
-      --lit-high:#39ff14;  /* Bright Lime (80-100) */
-      --lit-mid:#00f0ff;   /* Cyan (55-79) */
-      --lit-low:#f59e0b;   /* Amber (0-54) */
-
-      --top:38px;--foot:36px;--dock:52px;--tree:230px;--table:44%;
+      --magenta:#ff44cc;--top:36px;--foot:34px;--dock:48px;--tree:230px;--table:44%;
       --sat:env(safe-area-inset-top, 0px);--sab:env(safe-area-inset-bottom, 0px);
       --sal:env(safe-area-inset-left, 0px);--sar:env(safe-area-inset-right, 0px);
     }
@@ -37,10 +27,9 @@
       background-size:100% 100%,32px 32px,32px 32px;
     }
     button,input,select{font:inherit}button{color:inherit;cursor:pointer}
-    :focus-visible{outline:2px solid var(--acid)!important;outline-offset:1px!important}
     .app{height:100%;display:grid;grid-template-rows:var(--top) 1fr var(--foot)}
     
-    /* Scrollbars */
+    /* Scrollbar */
     ::-webkit-scrollbar{width:6px;height:6px}
     ::-webkit-scrollbar-track{background:var(--bg)}
     ::-webkit-scrollbar-thumb{background:var(--line2);border-radius:2px}
@@ -49,8 +38,8 @@
     .topbar{
       display:flex;align-items:center;gap:8px;padding:0 12px;
       border-bottom:1px solid var(--line2);
-      background:rgba(3,6,4,0.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-      min-width:0;position:relative;z-index:20;
+      background:rgba(3,6,4,0.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      min-width:0;position:relative;z-index:10;
     }
     .brand{
       color:var(--acid);font-family:"Outfit",sans-serif;font-weight:900;letter-spacing:.12em;
@@ -64,8 +53,8 @@
     @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.6;transform:scale(0.85)}}
 
     .searchbox{
-      display:flex;align-items:center;min-width:140px;max-width:520px;flex:1;
-      border:1px solid var(--line);background:rgba(8,13,10,0.75);padding:0 10px;
+      display:flex;align-items:center;min-width:140px;max-width:540px;flex:1;
+      border:1px solid var(--line);background:rgba(8,13,10,0.6);padding:0 10px;
       transition:border-color .15s,box-shadow .15s;border-radius:2px;
     }
     .searchbox:focus-within{border-color:var(--acid);box-shadow:0 0 12px var(--acid-glow)}
@@ -75,47 +64,15 @@
     .filter-chips{display:flex;gap:5px;min-width:0;overflow:auto;scrollbar-width:none}
     .filter-chips::-webkit-scrollbar{display:none}
     .chip{
-      height:22px;border:1px solid var(--line);background:rgba(13,20,16,0.7);
+      height:22px;border:1px solid var(--line);background:rgba(13,20,16,0.6);
       color:var(--cyan);padding:1px 8px;white-space:nowrap;font-size:11px;
       border-radius:2px;transition:all .12s;
     }
-    .chip:hover{border-color:var(--red);color:var(--red);background:rgba(255,71,87,0.12)}
+    .chip:hover{border-color:var(--red);color:var(--red);background:rgba(255,71,87,0.1)}
+    .sort{height:25px;border:1px solid var(--line);border-radius:2px;background:var(--panel);color:var(--text);padding:0 6px;outline:none}
+    .sort:focus{border-color:var(--acid)}
+    .total{color:var(--muted);white-space:nowrap;font-size:11px}.total b{color:var(--acid)}
     
-    /* TUI Sort Command Selector */
-    .tui-dropdown{position:relative;display:inline-block}
-    .tui-sort-btn{
-      height:26px;border:1px solid var(--line2);border-radius:2px;
-      background:rgba(13,20,16,0.85);color:var(--text);padding:0 8px;
-      display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap;
-      transition:all .15s;
-    }
-    .tui-sort-btn:hover{border-color:var(--acid);background:#131c16}
-    .tui-sort-btn .sort-lbl{color:var(--muted);font-size:10px}
-    .tui-sort-btn .caret{color:var(--acid);font-size:8px;transition:transform .15s}
-    .tui-sort-btn.open .caret{transform:rotate(180deg)}
-    .tui-dropdown-menu{
-      position:absolute;top:calc(100% + 4px);right:0;width:150px;
-      background:#070b08;border:1px solid var(--line2);box-shadow:0 12px 30px rgba(0,0,0,0.85);
-      border-radius:2px;z-index:50;display:flex;flex-direction:column;padding:4px 0;
-    }
-    .tui-dropdown-item{
-      padding:6px 10px;font-size:11px;color:var(--muted);cursor:pointer;
-      display:flex;align-items:center;gap:6px;transition:all .1s;
-    }
-    .tui-dropdown-item:hover,.tui-dropdown-item.active{
-      background:rgba(57,255,20,0.1);color:var(--text);
-    }
-    .tui-dropdown-item.active{color:var(--acid);font-weight:700}
-    .tui-dropdown-item .item-arrow{color:var(--acid);font-weight:bold;width:10px}
-
-    .total-btn{
-      background:none;border:1px solid var(--line);border-radius:2px;
-      padding:2px 8px;color:var(--muted);white-space:nowrap;font-size:11px;
-      display:flex;align-items:center;gap:4px;transition:all .12s;
-    }
-    .total-btn b{color:var(--acid)}
-    .total-btn:hover{border-color:var(--line2);background:rgba(255,255,255,0.03);color:var(--text)}
-
     .workspace{min-height:0;display:grid;grid-template-columns:var(--tree) minmax(380px,var(--table)) minmax(320px,1fr)}
     .workspace.tree-hidden{grid-template-columns:0 minmax(380px,var(--table)) minmax(320px,1fr)}
     .workspace.preview-hidden{grid-template-columns:var(--tree) minmax(480px,1fr) 0}
@@ -144,7 +101,7 @@
     .tree-group{border-bottom:1px solid var(--line)}
     .tree-group>summary{
       height:27px;display:flex;align-items:center;gap:6px;padding:0 10px;
-      color:#b3c4ba;background:rgba(7,10,8,0.5);cursor:pointer;list-style:none;user-select:none;transition:background .1s;
+      color:#aab7af;background:rgba(7,10,8,0.5);cursor:pointer;list-style:none;user-select:none;transition:background .1s;
     }
     .tree-group>summary:hover{background:rgba(17,26,20,0.8);color:#fff}
     .tree-group>summary::before{content:"[-]";color:var(--amber);font-weight:bold}
@@ -160,19 +117,17 @@
     .tree-item.selected::before{content:">";color:var(--acid);font-weight:bold}
     .tree-item:not(.selected)::before{content:"·"}
     .tree-item.active-register{box-shadow:inset 3px 0 var(--acid);color:var(--text);background:rgba(57,255,20,0.06)}
-    .tree-item .count{color:var(--muted-dim);font-size:11px}
+    .tree-item .count{color:#657269;font-size:11px}
     .swatch{width:9px;height:9px;display:inline-block;background:var(--register-color);margin-right:5px;border-radius:2px;box-shadow:0 0 6px var(--register-color)}
     .tree-empty{padding:6px 10px;color:var(--muted)}
     
     .table-pane{grid-template-rows:28px 24px 1fr}
-    .table-head,.prompt-row{display:grid;grid-template-columns:68px 72px 32px 32px 62px 68px 76px minmax(130px,1fr) minmax(90px,18%);align-items:center;gap:5px;padding:0 8px}
+    .table-head,.prompt-row{display:grid;grid-template-columns:68px 72px 30px 30px 62px 68px 76px minmax(130px,1fr) minmax(90px,18%);align-items:center;gap:5px;padding:0 8px}
     .table-head{color:var(--muted);background:#0d1410;border-bottom:1px solid var(--line2);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
-    .table-head span{cursor:default}
     .viewport{min-height:0;overflow:auto;scrollbar-color:var(--line2) var(--bg);position:relative}
     .prompt-row{
       height:25px;border-bottom:1px solid rgba(28,40,32,0.8);
-      cursor:default;background:rgba(8,13,10,0.6);user-select:none;
-      transition:background 80ms ease-out,color 80ms ease-out,box-shadow 80ms ease-out;
+      cursor:default;background:rgba(8,13,10,0.6);user-select:none;transition:background .1s;
     }
     .prompt-row:nth-child(even){background:rgba(6,10,8,0.6)}
     .prompt-row:hover{background:rgba(23,37,28,0.8);color:#fff}
@@ -183,68 +138,18 @@
     .prompt-row.in-range{background:#1d2417}
     .cell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .serial{color:var(--cyan);font-weight:700}
-    
-    /* Semantic Scores */
-    .score{font-weight:700}
-    .score-high{color:var(--cmp-high);text-shadow:0 0 8px rgba(239,68,68,0.25)}
-    .score-mid{color:var(--cmp-mid)}
-    .score-low{color:var(--cmp-low)}
-    .lit-score-high{color:var(--lit-high);text-shadow:0 0 8px var(--acid-glow)}
-    .lit-score-mid{color:var(--lit-mid)}
-    .lit-score-low{color:var(--lit-low)}
-
+    .score{font-weight:700}.score.high{color:var(--acid);text-shadow:0 0 8px var(--acid-glow)}.score.mid{color:var(--amber)}.score.low{color:var(--red)}
     .ptype{color:#b0c5b7}
-    .row-tags{color:var(--muted)}
+    .row-tags{color:#7f9185}
     .row-marks{display:flex;gap:2px}
-    .reg-token{min-width:12px;height:15px;display:grid;place-items:center;border:1px solid #29332c;color:#55695e;font-size:9px;font-weight:700;line-height:1;border-radius:1px}
+    .reg-token{min-width:12px;height:15px;display:grid;place-items:center;border:1px solid #29332c;color:#435047;font-size:9px;font-weight:700;line-height:1;border-radius:1px}
     .reg-token.on{color:#061008;background:var(--register-color);border-color:var(--register-color);box-shadow:0 0 8px var(--register-color)}
     .spacer{height:0}
     .no-results{padding:24px;color:var(--muted);text-align:center}
     
-    .preview-pane{grid-template-rows:28px 1fr;overflow:hidden}
+    .mobile-card{display:none}
     
-    /* Zero State Component */
-    .zero-state-container{
-      height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;
-      padding:20px 24px;text-align:center;color:var(--muted);background:#050906;overflow-y:auto;
-    }
-    .zero-state-card{
-      max-width:440px;width:100%;border:1px dashed var(--line2);background:rgba(13,20,16,0.6);
-      padding:24px 20px;border-radius:4px;box-shadow:0 12px 30px rgba(0,0,0,0.5);
-    }
-    .zero-state-badge{
-      display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:700;
-      color:var(--acid);background:rgba(57,255,20,0.08);border:1px solid rgba(57,255,20,0.25);
-      padding:3px 8px;border-radius:2px;margin-bottom:12px;letter-spacing:.08em;
-    }
-    .pulse-dot{
-      width:6px;height:6px;background:var(--acid);border-radius:50%;
-      box-shadow:0 0 6px var(--acid);animation:pulse 1.5s infinite;
-    }
-    .zero-state-title{
-      color:var(--text);font-family:"Outfit",sans-serif;font-size:15px;font-weight:700;
-      margin:0 0 14px;line-height:1.3;
-    }
-    .zero-state-guide{
-      display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;text-align:left;
-      background:#080c09;padding:12px;border:1px solid var(--line);border-radius:2px;margin-bottom:16px;
-    }
-    .guide-item{display:flex;align-items:center;gap:6px;font-size:11px;color:#a3b8ad}
-    .guide-item kbd{
-      background:#16241b;color:var(--acid);border:1px solid var(--line2);
-      padding:1px 5px;font-size:10px;font-weight:700;border-radius:2px;min-width:18px;text-align:center;
-    }
-    .zero-state-skeleton{display:flex;flex-direction:column;gap:8px;opacity:0.4}
-    .skel-line{height:8px;background:var(--line2);border-radius:2px}
-    .skel-line.w80{width:80%;margin:0 auto}
-    .skel-line.w60{width:60%;margin:0 auto}
-    .skel-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:4px 0}
-    .skel-box{height:20px;background:var(--line);border-radius:2px}
-
-    /* Populated Inspector */
-    .populated-inspect{
-      height:100%;display:grid;grid-template-rows:auto minmax(140px,1fr) auto;overflow:hidden;
-    }
+    .preview-pane{grid-template-rows:28px auto minmax(140px,1fr) auto}
     .preview-meta{display:grid;grid-template-columns:repeat(3,minmax(72px,1fr));gap:1px;border-bottom:1px solid var(--line);background:var(--line)}
     .meta-cell{padding:5px 8px;background:#080c09;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px}
     .meta-cell b{color:var(--text)}
@@ -267,35 +172,15 @@
     .remarks{margin:6px 0 0;padding:0;list-style:none;color:var(--amber);font-size:11px}
     .remarks li::before{content:"! ";color:var(--red)}
     
-    /* Structured Footer Hotkey Bar */
-    .footer{
-      display:flex;align-items:center;gap:10px;padding:0 12px;
-      border-top:1px solid var(--line2);background:#020403;color:var(--muted);
-      white-space:nowrap;overflow:auto;padding-bottom:var(--sab);
-    }
-    .footer-group{display:flex;align-items:center;gap:8px}
-    .footer-badge{
-      font-size:9px;font-weight:800;padding:1px 4px;border-radius:2px;
-      letter-spacing:.06em;font-family:"Outfit",sans-serif;
-    }
-    .footer-badge.nav{background:#112217;color:var(--acid);border:1px solid rgba(57,255,20,0.2)}
-    .footer-badge.act{background:#241f11;color:var(--amber);border:1px solid rgba(255,184,0,0.2)}
-    .footer-badge.sys{background:#111f24;color:var(--cyan);border:1px solid rgba(0,240,255,0.2)}
-    
-    .hotkey{font-size:11px;display:inline-flex;align-items:center;gap:4px}
-    .hotkey b{color:#041008;background:var(--acid);padding:1px 4px;font-weight:bold;border-radius:1px}
-    .footer-sep{width:1px;height:14px;background:var(--line2);margin:0 2px}
+    .footer{display:flex;align-items:center;gap:12px;padding:0 8px;border-top:1px solid var(--line2);background:#020403;color:var(--muted);white-space:nowrap;overflow:auto;padding-bottom:var(--sab)}
+    .hotkey{font-size:11px}.hotkey b{color:#041008;background:var(--acid);padding:1px 4px;font-weight:bold}
     .footer-spacer{flex:1}
-    .active-reg{
-      color:var(--register-color);font-weight:bold;cursor:pointer;
-      padding:2px 6px;border:1px solid transparent;border-radius:2px;transition:all .12s;
-    }
-    .active-reg:hover{border-color:var(--register-color);background:rgba(255,255,255,0.03)}
-    .status{color:var(--amber);font-size:11px;font-weight:bold}
+    .active-reg{color:var(--register-color);font-weight:bold;cursor:pointer}
+    .status{color:var(--amber);font-size:11px}
     
     .mobile-dock{display:none}
     
-    dialog{width:min(700px,calc(100vw - 20px));max-height:86vh;padding:0;border:1px solid var(--line2);border-radius:2px;background:#070a08;color:var(--text);box-shadow:0 22px 90px #000;padding-bottom:var(--sab)}
+    dialog{width:min(700px,calc(100vw - 20px));max-height:86vh;padding:0;border:1px solid var(--line2);border-radius:0;background:#070a08;color:var(--text);box-shadow:0 22px 90px #000;padding-bottom:var(--sab)}
     dialog::backdrop{background:#000c}
     .dialog-head{height:34px;display:flex;align-items:center;padding:0 10px;border-bottom:1px solid var(--line2);color:var(--acid);font-weight:bold}
     .dialog-head button{margin-left:auto;border:0;background:none;color:var(--red);font-size:16px;padding:4px 8px}
@@ -328,9 +213,8 @@
       .topbar .searchbox{min-width:90px;height:30px}
       .topbar .searchbox input{font-size:16px}
       .topbar .filter-chips{display:none}
-      .tui-sort-btn{height:28px;font-size:11px;padding:0 6px}
-      .tui-sort-btn .sort-lbl{display:none}
-      .total-btn{font-size:10px;padding:2px 4px}
+      .topbar .sort{height:28px;font-size:11px;max-width:85px}
+      .topbar .total{font-size:10px}
       
       .workspace,.workspace.tree-hidden,.workspace.preview-hidden,.workspace.tree-hidden.preview-hidden{grid-template-columns:1fr}
       .pane{display:none!important}
@@ -356,7 +240,7 @@
       
       .prompt-row .table-head-desktop,.prompt-row>span.cell:not(.row-marks):not(.serial):not(.score):not(.ptype):not(.row-tags){display:none}
       
-      .preview-pane{grid-template-rows:32px 1fr}
+      .preview-pane{grid-template-rows:32px auto 1fr auto}
       .preview-info{max-height:50vh}
       .mechanics{grid-template-columns:1fr}
       
@@ -369,8 +253,7 @@
       }
       .dock-btn{
         border:0;background:none;color:var(--muted);display:flex;flex-direction:column;
-        align-items:center;justify-content:center;padding:4px 2px;font-size:10px;gap:2px;cursor:pointer;
-        min-height:48px
+        align-items:center;justify-content:center;padding:4px 2px;font-size:10px;gap:2px;cursor:pointer
       }
       .dock-btn .dock-icon{font-weight:900;font-size:12px}
       .dock-btn .dock-badge{font-size:9px;color:var(--acid);font-weight:700}
@@ -386,29 +269,17 @@
 <div class="app">
   <header class="topbar">
     <div class="brand"><i class="logo-icon"></i><span>8::</span>PROMPTS</div>
-    <label class="searchbox"><b>/</b><input id="search" type="search" autocomplete="off" placeholder="filter / semantic search"></label>
+    <label class="searchbox"><b>/</b><input id="search" type="search" autocomplete="off" placeholder="filter / semantic"></label>
     <div class="filter-chips" id="filterChips"></div>
-    
-    <!-- TUI Command Selector for Sorting -->
-    <div class="tui-dropdown" id="sortDropdown">
-      <button class="tui-sort-btn" id="sortTrigger" aria-haspopup="listbox" aria-expanded="false" title="Sort order [s]">
-        <span class="sort-lbl">SORT:</span>
-        <span id="sortCurrentLabel">newest</span>
-        <span class="caret">▼</span>
-      </button>
-      <div class="tui-dropdown-menu" id="sortMenu" role="listbox" hidden>
-        <div class="tui-dropdown-item active" data-sort="newest" role="option"><span class="item-arrow">></span> newest</div>
-        <div class="tui-dropdown-item" data-sort="oldest" role="option"><span class="item-arrow">&nbsp;</span> oldest</div>
-        <div class="tui-dropdown-item" data-sort="serial" role="option"><span class="item-arrow">&nbsp;</span> serial</div>
-        <div class="tui-dropdown-item" data-sort="title" role="option"><span class="item-arrow">&nbsp;</span> title</div>
-        <div class="tui-dropdown-item" data-sort="complexity" role="option"><span class="item-arrow">&nbsp;</span> complexity ↓</div>
-        <div class="tui-dropdown-item" data-sort="literacy" role="option"><span class="item-arrow">&nbsp;</span> literacy ↓</div>
-      </div>
-    </div>
-    
-    <button class="total-btn" id="totalCountBtn" title="Click to clear all active filters" onclick="clearFilters()">
-      <b id="visibleCount">0</b>/<span id="totalCount">0</span>
-    </button>
+    <select class="sort" id="sort" aria-label="Sort prompts">
+      <option value="newest">newest</option>
+      <option value="oldest">oldest</option>
+      <option value="serial">serial</option>
+      <option value="title">title</option>
+      <option value="complexity">complexity ↓</option>
+      <option value="literacy">literacy ↓</option>
+    </select>
+    <div class="total"><b id="visibleCount">0</b>/<span id="totalCount">0</span></div>
   </header>
 
   <main class="workspace" id="workspace">
@@ -416,8 +287,8 @@
       <div class="pane-title">
         <span>[1] GROUPS</span><small>OR / AND</small>
         <div class="actions">
-          <button class="link" id="clearFilters" title="Clear all filters">[clear]</button>
-          <button class="link" onclick="setPane(2)">[prompts →]</button>
+          <button class="link" id="clearFilters">[clear]</button>
+          <button class="link" onclick="setPane(2)">[view prompts →]</button>
         </div>
       </div>
       <div class="tree-scroll" id="tree"></div>
@@ -432,15 +303,7 @@
         </div>
       </div>
       <div class="table-head">
-        <span title="Register color marks (1-5)">marks</span>
-        <span title="Stable Serial identifier (P-XXXXXX)">serial</span>
-        <span title="Complexity rating (0-100: Emerald <= 35, Amber <= 70, Crimson > 70)">cmp</span>
-        <span title="Prompt Literacy Score (0-100)">lit</span>
-        <span title="Estimated Input Tokens">in tok</span>
-        <span title="Estimated Output Tokens">out tok</span>
-        <span title="Artifact Classification Type">type</span>
-        <span title="Prompt Title">title</span>
-        <span title="English Tags & Categories">tags</span>
+        <span>marks</span><span>serial</span><span>cmp</span><span>lit</span><span>in tok</span><span>out tok</span><span>type</span><span>title</span><span>tags</span>
       </div>
       <div class="viewport" id="viewport">
         <div class="spacer" id="topSpacer"></div>
@@ -459,90 +322,44 @@
           <button class="link" data-command="analyze">[a] ai</button>
         </div>
       </div>
-      
-      <!-- Interactive Zero State when no prompt is selected -->
-      <div class="zero-state-container" id="zeroStateContainer">
-        <div class="zero-state-card">
-          <div class="zero-state-badge"><i class="pulse-dot"></i> [ INSPECTOR // AWAITING_SELECTION ]</div>
-          <h3 class="zero-state-title">Select a prompt from Table [2] to inspect mechanics</h3>
-          <div class="zero-state-guide">
-            <div class="guide-item"><kbd>j</kbd><kbd>k</kbd> <span>Navigate rows</span></div>
-            <div class="guide-item"><kbd>/</kbd> <span>Filter / search</span></div>
-            <div class="guide-item"><kbd>Space</kbd> <span>Mark into register</span></div>
-            <div class="guide-item"><kbd>r</kbd> <span>Switch register (1-5)</span></div>
-            <div class="guide-item"><kbd>c</kbd> <span>Quick copy prompt</span></div>
-            <div class="guide-item"><kbd>?</kbd> <span>Full command keymap</span></div>
-          </div>
-          <div class="zero-state-skeleton">
-            <div class="skel-line w80"></div>
-            <div class="skel-grid">
-              <div class="skel-box"></div>
-              <div class="skel-box"></div>
-              <div class="skel-box"></div>
-              <div class="skel-box"></div>
-            </div>
-            <div class="skel-line w60"></div>
-          </div>
-        </div>
+      <div class="preview-meta">
+        <div class="meta-cell">TYPE <b id="pType">-</b></div>
+        <div class="meta-cell">CMP <b id="pCmp">-</b></div>
+        <div class="meta-cell">LIT <b id="pLit">-</b></div>
+        <div class="meta-cell">IN <b id="pInputTokens">-</b></div>
+        <div class="meta-cell">OUT <b id="pOutputTokens">-</b></div>
+        <div class="meta-cell">TOTAL <b id="pTotalTokens">-</b></div>
       </div>
-
-      <!-- Populated Inspector Pane -->
-      <div class="populated-inspect" id="populatedInspect" hidden>
-        <div class="preview-meta">
-          <div class="meta-cell">TYPE <b id="pType">-</b></div>
-          <div class="meta-cell">CMP <b id="pCmp">-</b></div>
-          <div class="meta-cell">LIT <b id="pLit">-</b></div>
-          <div class="meta-cell">IN <b id="pInputTokens">-</b></div>
-          <div class="meta-cell">OUT <b id="pOutputTokens">-</b></div>
-          <div class="meta-cell">TOTAL <b id="pTotalTokens">-</b></div>
+      <pre class="preview-code"><code id="previewCode">Select a prompt to inspect.</code></pre>
+      <div class="preview-info">
+        <h2 class="preview-title" id="pTitle">NO_PROMPT_SELECTED</h2>
+        <div class="mechanics">
+          <div class="mechanic"><b>HOW IT WORKS</b><span id="pHow">-</span></div>
+          <div class="mechanic"><b>WHY IT WORKS</b><span id="pWhy">-</span></div>
+          <div class="mechanic"><b>STRUCTURE</b><span id="pStructure">-</span></div>
+          <div class="mechanic"><b>COVERAGE</b><span id="pCoverage">-</span></div>
+          <div class="mechanic"><b>EXPECTED OUTPUT</b><span id="pOutput">-</span></div>
+          <div class="mechanic"><b>LEARNING</b><span id="pLearning">-</span></div>
         </div>
-        <pre class="preview-code"><code id="previewCode">Select a prompt to inspect.</code></pre>
-        <div class="preview-info">
-          <h2 class="preview-title" id="pTitle">NO_PROMPT_SELECTED</h2>
-          <div class="mechanics">
-            <div class="mechanic"><b>HOW IT WORKS</b><span id="pHow">-</span></div>
-            <div class="mechanic"><b>WHY IT WORKS</b><span id="pWhy">-</span></div>
-            <div class="mechanic"><b>STRUCTURE</b><span id="pStructure">-</span></div>
-            <div class="mechanic"><b>COVERAGE</b><span id="pCoverage">-</span></div>
-            <div class="mechanic"><b>EXPECTED OUTPUT</b><span id="pOutput">-</span></div>
-            <div class="mechanic"><b>LEARNING</b><span id="pLearning">-</span></div>
-          </div>
-          <div class="metadata-line"><b>REGISTERS</b> <span id="pRegisters">-</span></div>
-          <div class="metadata-line"><b>TAGS</b> <span id="pTags">-</span></div>
-          <div class="metadata-line"><b>MARKS</b> <span id="pMarks">-</span></div>
-          <ul class="remarks" id="pRemarks"><li>-</li></ul>
-        </div>
+        <div class="metadata-line"><b>REGISTERS</b> <span id="pRegisters">-</span></div>
+        <div class="metadata-line"><b>TAGS</b> <span id="pTags">-</span></div>
+        <div class="metadata-line"><b>MARKS</b> <span id="pMarks">-</span></div>
+        <ul class="remarks" id="pRemarks"><li>-</li></ul>
       </div>
     </aside>
   </main>
 
   <footer class="footer">
-    <div class="footer-group">
-      <span class="footer-badge nav">NAV</span>
-      <span class="hotkey"><b>1-3</b> Panes</span>
-      <span class="hotkey"><b>j/k</b> Move</span>
-      <span class="hotkey"><b>g/G</b> Top/Bot</span>
-    </div>
-    <div class="footer-sep"></div>
-    <div class="footer-group">
-      <span class="footer-badge act">ACT</span>
-      <span class="hotkey"><b>Space</b> Mark</span>
-      <span class="hotkey"><b>r</b> Register</span>
-      <span class="hotkey"><b>v</b> Range</span>
-      <span class="hotkey"><b>c</b> Copy</span>
-      <span class="hotkey"><b>e</b> Export</span>
-    </div>
-    <div class="footer-sep"></div>
-    <div class="footer-group">
-      <span class="footer-badge sys">SYS</span>
-      <span class="hotkey"><b>/</b> Search</span>
-      <span class="hotkey"><b>s</b> Sort</span>
-      <span class="hotkey"><b>:</b> Cmds</span>
-      <span class="hotkey"><b>a</b> AI</span>
-      <span class="hotkey"><b>?</b> Help</span>
-    </div>
+    <span class="hotkey"><b>1/2/3</b> panes</span>
+    <span class="hotkey"><b>j/k</b> move</span>
+    <span class="hotkey"><b>v</b> range</span>
+    <span class="hotkey"><b>Space</b> mark</span>
+    <span class="hotkey"><b>r</b> register</span>
+    <span class="hotkey optional"><b>/</b> search</span>
+    <span class="hotkey optional"><b>:</b> commands</span>
+    <span class="hotkey optional"><b>?</b> help</span>
     <span class="footer-spacer"></span>
-    <span class="active-reg" id="activeRegister" onclick="openRegisters()" title="Click to change active register">KEEP [0]</span>
+    <span class="active-reg" id="activeRegister" onclick="openRegisters()">KEEP [0]</span>
     <span class="status" id="status">READY</span>
   </footer>
 
@@ -602,7 +419,7 @@
       <p>Basic Auth required for AI usage.</p>
       <input class="command-search" id="analysisUser" autocomplete="username" placeholder="username">
       <input class="command-search" id="analysisPass" type="password" autocomplete="current-password" placeholder="password">
-      <button class="action-btn primary" id="analysisLogin" onclick="authenticateAnalysis()">authenticate + run</button>
+      <button class="action-btn primary" id="analysisLogin">authenticate + run</button>
     </div>
     <div class="analysis-meta" id="analysisMeta"></div>
     <div class="export-actions" style="margin-bottom:10px">
@@ -627,11 +444,9 @@ const getRowHeight=()=>window.innerWidth<=900?68:24;
 const DEFAULT_REGISTERS=[
  {id:"keep",name:"KEEP",color:"#57ff8f",key:"K"},{id:"review",name:"REVIEW",color:"#ffc857",key:"V"},{id:"drop",name:"DROP",color:"#ff5b5b",key:"D"},{id:"research",name:"RESEARCH",color:"#58d6ff",key:"S"},{id:"remix",name:"REMIX",color:"#ff68d4",key:"M"}
 ];
-const state={items:[],displayItems:[],total:0,facets:{types:{},tags:{},complexity:{},literacy:{}},cursor:0,pane:1,activeRegister:"keep",registers:{},filters:{registers:new Set(),types:new Set(),tags:new Set(),complexity:new Set(),literacy:new Set()},detailCache:new Map(),visualAnchor:null,treeVisible:true,previewVisible:true,commandCursor:0,requestId:0,authHeader:"",sort:"newest"};
+const state={items:[],displayItems:[],total:0,facets:{types:{},tags:{},complexity:{},literacy:{}},cursor:0,pane:1,activeRegister:"keep",registers:{},filters:{registers:new Set(),types:new Set(),tags:new Set(),complexity:new Set(),literacy:new Set()},detailCache:new Map(),visualAnchor:null,treeVisible:true,previewVisible:true,commandCursor:0,requestId:0,authHeader:""};
 const $=id=>document.getElementById(id),esc=(v="")=>String(v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-
-const cmpScoreClass=n=>n>70?"score-high":n>35?"score-mid":"score-low";
-const litScoreClass=n=>n>=80?"lit-score-high":n>=55?"lit-score-mid":"lit-score-low";
+const scoreClass=n=>n>=75?"high":n>=50?"mid":"low";
 
 function registerTemplate(){return Object.fromEntries(DEFAULT_REGISTERS.map(r=>[r.id,{...r,serials:new Set()}]))}
 function loadLocal(){
@@ -758,14 +573,13 @@ function renderVirtual(){
   root.innerHTML=items.slice(start,end).map((item,offset)=>{
     const i=start+offset;
     const isActive=i===state.cursor, inRange=i>=range[0]&&i<=range[1];
-    const cScore=cmpScoreClass(item.complexity), lScore=litScoreClass(item.literacy_score);
     if(isMobile){
       return `<div class="prompt-row ${isActive?"active":""} ${inRange?"in-range":""}" data-index="${i}" data-serial="${esc(item.serial)}">
         <div class="mobile-row-top">
           <span class="row-marks">${markerHtml(item)}</span>
           <span class="serial">${esc(item.serial)}</span>
-          <span class="score ${cScore}">CMP ${item.complexity}</span>
-          <span class="score ${lScore}">LIT ${item.literacy_score}</span>
+          <span class="score ${scoreClass(item.complexity)}">CMP ${item.complexity}</span>
+          <span class="score ${scoreClass(item.literacy_score)}">LIT ${item.literacy_score}</span>
           <span style="margin-left:auto;color:var(--muted)">${tokenRange(item.token_estimate,"input")}/${tokenRange(item.token_estimate,"output")}</span>
         </div>
         <div class="mobile-row-title">${esc(item.title)}</div>
@@ -778,8 +592,8 @@ function renderVirtual(){
     return `<div class="prompt-row ${isActive?"active":""} ${inRange?"in-range":""}" data-index="${i}" data-serial="${esc(item.serial)}">
       <span class="row-marks cell">${markerHtml(item)}</span>
       <span class="serial cell">${esc(item.serial)}</span>
-      <span class="score ${cScore} cell">${item.complexity}</span>
-      <span class="score ${lScore} cell">${item.literacy_score}</span>
+      <span class="score ${scoreClass(item.complexity)} cell">${item.complexity}</span>
+      <span class="score ${scoreClass(item.literacy_score)} cell">${item.literacy_score}</span>
       <span class="cell">${tokenRange(item.token_estimate,"input")}</span>
       <span class="cell">${tokenRange(item.token_estimate,"output")}</span>
       <span class="ptype cell">${esc(item.prompt_type)}</span>
@@ -875,7 +689,7 @@ async function loadPrompts(){
   setStatus("LOADING",0);
   const query=new URLSearchParams({
     view:"compact",limit:String(PAGE_SIZE),offset:"0",
-    q:$("search").value,sort:state.sort,
+    q:$("search").value,sort:$("sort").value,
     tags:[...state.filters.tags].join(","),
     types:[...state.filters.types].join(","),
     complexity_buckets:[...state.filters.complexity].join(","),
@@ -948,24 +762,20 @@ function richText(value){
   return esc(value||"-").replace(/(Логика:|генерирует|сопоставляет|разбирает|создаёт|формирует|ограничения|результат)/gi,'<span class="syn-key">$1</span>').replace(/(\{[^}]+\}|&lt;[A-Za-z_][^&]*?&gt;)/g,'<span class="syn-var">$1</span>');
 }
 function renderDetail(item){
-  const zeroState=$("zeroStateContainer"), populated=$("populatedInspect");
   if(!item){
     $("previewSerial").textContent="-";
     $("mobileInspectBadge").textContent="view";
-    zeroState.hidden=false;
-    populated.hidden=true;
+    $("pTitle").textContent="NO_PROMPT_SELECTED";
+    $("previewCode").textContent="Select a prompt to inspect.";
     return;
   }
-  zeroState.hidden=true;
-  populated.hidden=false;
-
   const legacy=parseMechanics(item.description),tokens=item.token_estimate||{},learning=item.learning_complexity||{};
   $("previewSerial").textContent=item.serial;
   $("mobileInspectBadge").textContent=item.serial;
   $("pTitle").textContent=item.title;
   $("pType").textContent=item.prompt_type;
-  $("pCmp").innerHTML=`<span class="score ${cmpScoreClass(item.complexity)}">${item.complexity}</span>`;
-  $("pLit").innerHTML=`<span class="score ${litScoreClass(item.literacy_score)}">${item.literacy_score}</span>`;
+  $("pCmp").textContent=item.complexity;
+  $("pLit").textContent=item.literacy_score;
   $("pInputTokens").textContent=tokenRange(tokens,"input");
   $("pOutputTokens").textContent=tokenRange(tokens,"output");
   $("pTotalTokens").textContent=tokenRange(tokens,"total");
@@ -975,7 +785,7 @@ function renderDetail(item){
   $("pStructure").innerHTML=(item.structure||[]).map(x=>`<span class="pill">${esc(x)}</span>`).join(" → ")||"-" ;
   $("pCoverage").innerHTML=(item.coverage||[]).map(x=>`<span class="pill">${esc(x)}</span>`).join(" ")||"-" ;
   $("pOutput").innerHTML=richText(item.expected_output||legacy.output);
-  $("pLearning").innerHTML=`<span class="score ${cmpScoreClass(learning.score||item.complexity)}">${esc(learning.level||"-")} / ${learning.score||item.complexity}</span> — ${esc(learning.reason||"-")}`;
+  $("pLearning").innerHTML=`<span class="score ${scoreClass(learning.score||item.complexity)}">${esc(learning.level||"-")} / ${learning.score||item.complexity}</span> — ${esc(learning.reason||"-")}`;
   $("pTags").innerHTML=(item.tags||[]).map(x=>`<span class="pill">#${esc(x)}</span>`).join("")||"-";
   $("pMarks").innerHTML=(item.special_marks||[]).map(x=>`<span class="pill mark">${esc(x)}</span>`).join("")||"-";
   $("pRemarks").innerHTML=(item.remarks||[]).map(x=>`<li>${esc(x)}</li>`).join("")||"<li>Без критических замечаний.</li>";
@@ -1015,41 +825,11 @@ function selectRegister(id){
   renderFooter();
   setStatus(`ACTIVE ${state.registers[id].name}`);
 }
-
-/* Custom Sort Dropdown Handler */
-const SORT_LABELS={newest:"newest",oldest:"oldest",serial:"serial",title:"title",complexity:"complexity ↓",literacy:"literacy ↓"};
-function toggleSortDropdown(force){
-  const menu=$("sortMenu"),btn=$("sortTrigger");
-  const show=force!==undefined?force:menu.hidden;
-  menu.hidden=!show;
-  btn.classList.toggle("open",show);
-  btn.setAttribute("aria-expanded",String(show));
-}
-function selectSort(sortVal){
-  state.sort=sortVal;
-  $("sortCurrentLabel").textContent=SORT_LABELS[sortVal]||sortVal;
-  document.querySelectorAll(".tui-dropdown-item").forEach(item=>{
-    const isActive=item.dataset.sort===sortVal;
-    item.classList.toggle("active",isActive);
-    item.querySelector(".item-arrow").innerHTML=isActive?">":"&nbsp;";
-  });
-  toggleSortDropdown(false);
-  loadPrompts();
-}
-$("sortTrigger").onclick=e=>{e.stopPropagation();toggleSortDropdown()};
-document.querySelectorAll(".tui-dropdown-item").forEach(item=>{
-  item.onclick=e=>{e.stopPropagation();selectSort(item.dataset.sort)};
-});
-document.addEventListener("click",e=>{
-  if(!e.target.closest("#sortDropdown"))toggleSortDropdown(false);
-});
-
 const COMMANDS=[
  ["1","Focus groups",()=>setPane(1)],
  ["2","Focus prompts",()=>setPane(2)],
  ["3","Focus preview",()=>setPane(3)],
  ["/","Search prompts",()=>$("search").focus()],
- ["s","Sort selector",()=>toggleSortDropdown()],
  ["r","Select color register",openRegisters],
  ["Space","Toggle mark",()=>toggleMark()],
  ["v","Visual range",toggleVisual],
@@ -1192,7 +972,6 @@ function authenticateAnalysis(){
   runAnalysis();
 }
 function closeTop(){
-  if(!$("sortMenu").hidden){toggleSortDropdown(false);return true}
   const dialog=[...document.querySelectorAll("dialog")].find(d=>d.open);
   if(dialog){const active=document.activeElement;dialog.close();active?.blur();return true}
   if(state.visualAnchor!==null){state.visualAnchor=null;renderVirtual();return true}
@@ -1232,7 +1011,6 @@ function handleKey(e){
   else if(key==="v"){toggleVisual()}
   else if(key==="u"){toggleMark(true)}
   else if(key==="/"){e.preventDefault();$("search").focus()}
-  else if(key==="s"){e.preventDefault();toggleSortDropdown()}
   else if(key===":" ){openCommands()}
   else if(key==="?"){openHelp()}
   else if(key==="r"){openRegisters()}
@@ -1245,6 +1023,7 @@ function handleKey(e){
 }
 let searchTimer;
 $("search").addEventListener("input",()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadPrompts,180)});
+$("sort").onchange=loadPrompts;
 $("viewport").onscroll=renderVirtual;
 $("clearFilters").onclick=clearFilters;
 document.addEventListener("keydown",handleKey);
@@ -1263,6 +1042,7 @@ document.querySelectorAll("[data-export]").forEach(x=>x.onclick=()=>{
   const [mode,format]=x.dataset.export.split(":");
   exportRegisters(mode,format);
 });
+
 
 loadLocal();
 setPane(window.innerWidth<=900?2:1);
