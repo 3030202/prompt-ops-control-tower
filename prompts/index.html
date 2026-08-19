@@ -133,10 +133,10 @@
       color:var(--acid);font-weight:800;white-space:nowrap;font-family:"Outfit",sans-serif;letter-spacing:.05em;
     }
     .pane-title small{color:var(--muted);font-weight:400;font-family:"JetBrains Mono",monospace;font-size:10px}
-    .pane-title .actions{margin-left:auto;display:flex;gap:5px;align-items:center}
+    .pane-title .actions{margin-left:auto;display:flex;gap:4px;align-items:center}
     .link{
       border:1px solid transparent;background:none;color:var(--cyan);
-      padding:2px 6px;font-size:11px;border-radius:2px;transition:all .12s;
+      padding:2px 5px;font-size:11px;border-radius:2px;transition:all .12s;
     }
     .link:hover{color:var(--acid);border-color:var(--line2);background:rgba(57,255,20,0.08);box-shadow:0 0 8px var(--acid-glow)}
     .link.btn-back{display:none;color:var(--amber);background:#131a15;border:1px solid var(--line2);font-weight:bold}
@@ -346,6 +346,31 @@
     .pg-telemetry{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--muted);padding:4px 0}
     .pg-telemetry b{color:var(--acid)}
 
+    /* Visual Diff Styles */
+    .diff-header-bar{
+      display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:center;margin-bottom:10px;
+      background:#090e0b;padding:8px 10px;border:1px solid var(--line);border-radius:2px;
+    }
+    .diff-header-bar label{font-size:10px;color:var(--muted);font-weight:700;margin-bottom:2px;display:block}
+    .diff-view-mode{display:flex;gap:4px}
+    .diff-meta-deltas{
+      display:flex;gap:12px;padding:6px 10px;font-size:11px;background:#050906;border:1px solid var(--line2);margin-bottom:10px;border-radius:2px;
+    }
+    .diff-container{
+      max-height:55vh;overflow:auto;background:#020403;border:1px solid var(--line2);font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.45;border-radius:2px;
+    }
+    .diff-split{display:grid;grid-template-columns:1fr 1fr}
+    .diff-col{overflow-x:auto;padding:6px 0}
+    .diff-col:first-child{border-right:1px solid var(--line)}
+    .diff-line{padding:1px 8px;white-space:pre-wrap;display:flex;gap:8px}
+    .diff-line-num{color:var(--muted-dim);width:24px;user-select:none;text-align:right;font-size:10px}
+    .diff-added{background:rgba(57,255,20,0.12);color:var(--acid)}
+    .diff-removed{background:rgba(255,71,87,0.12);color:var(--red)}
+    .diff-same{color:#abb8b0}
+
+    /* Optimizer Modes */
+    .optimizer-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+
     .register-list{display:grid;gap:6px}
     .register-option{display:grid;grid-template-columns:26px 1fr auto;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);background:#090e0b;cursor:pointer}
     .register-option.active{border-color:var(--register-color);background:#0e1511}
@@ -409,6 +434,8 @@
       .footer{display:none}
       .playground-grid{grid-template-columns:1fr}
       .playground-config{border-right:0;border-bottom:1px solid var(--line);padding-right:0;padding-bottom:12px}
+      .optimizer-modes{grid-template-columns:1fr}
+      .diff-header-bar{grid-template-columns:1fr}
       
       .mobile-dock{
         display:grid;grid-template-columns:repeat(4,1fr);align-items:stretch;
@@ -475,8 +502,9 @@
       <div class="pane-title">
         <span>[2] PROMPTS</span><small id="rangeStatus">NORMAL</small>
         <div class="actions">
-          <button class="link" data-command="registers">[r] register</button>
-          <button class="link" data-command="export-active">[e] export</button>
+          <button class="link" data-command="registers">[r] reg</button>
+          <button class="link" data-command="diff" title="Visual Side-by-Side Diff [d]">[d] diff</button>
+          <button class="link" data-command="export-active">[e] exp</button>
         </div>
       </div>
       <div class="table-head">
@@ -503,9 +531,10 @@
         <span>[3] INSPECT</span><small id="previewSerial">-</small>
         <div class="actions">
           <button class="link" id="btnYankPrompt" data-command="yank" title="Multi-format copy [y]">[y] yank</button>
-          <button class="link" id="btnPlayground" data-command="playground" title="Open Interactive Playground [Ctrl+P]">[play] run</button>
-          <button class="link" data-command="toggle-mark" title="Toggle mark in register [Space]">[space] mark</button>
-          <button class="link" data-command="analyze" title="AI Analysis [a]">[a] ai</button>
+          <button class="link" id="btnPlayground" data-command="playground" title="Open Interactive Playground [p]">[play] run</button>
+          <button class="link" id="btnOptimize" data-command="optimize" title="AI Prompt Optimizer [Ctrl+O]">[opt] opt</button>
+          <button class="link" id="btnShare" data-command="share" title="Copy Share Link">[share]</button>
+          <button class="link" data-command="toggle-mark" title="Toggle mark in register [Space]">[space]</button>
         </div>
       </div>
       
@@ -519,8 +548,8 @@
             <div class="guide-item"><kbd>/</kbd> <span>Filter / search</span></div>
             <div class="guide-item"><kbd>y</kbd> <span>Yank (Multi-format copy)</span></div>
             <div class="guide-item"><kbd>p</kbd> <span>BYOK Playground</span></div>
-            <div class="guide-item"><kbd>Space</kbd> <span>Mark into register</span></div>
-            <div class="guide-item"><kbd>r</kbd> <span>Switch register (1-5)</span></div>
+            <div class="guide-item"><kbd>d</kbd> <span>Side-by-side Diff</span></div>
+            <div class="guide-item"><kbd>O</kbd> <span>AI Prompt Optimizer</span></div>
           </div>
           <div class="zero-state-skeleton">
             <div class="skel-line w80"></div>
@@ -591,10 +620,12 @@
     <div class="footer-group">
       <span class="footer-badge act">ACT</span>
       <span class="hotkey"><b>Space</b> Mark</span>
-      <span class="hotkey"><b>r</b> Register</span>
+      <span class="hotkey"><b>r</b> Reg</span>
       <span class="hotkey"><b>y</b> Yank</span>
       <span class="hotkey"><b>p</b> Play</span>
-      <span class="hotkey"><b>e</b> Export</span>
+      <span class="hotkey"><b>d</b> Diff</span>
+      <span class="hotkey"><b>O</b> Opt</span>
+      <span class="hotkey"><b>e</b> Exp</span>
     </div>
     <div class="footer-sep"></div>
     <div class="footer-group">
@@ -602,7 +633,6 @@
       <span class="hotkey"><b>/</b> Search</span>
       <span class="hotkey"><b>s</b> Sort</span>
       <span class="hotkey"><b>:</b> Cmds</span>
-      <span class="hotkey"><b>a</b> AI</span>
       <span class="hotkey"><b>?</b> Help</span>
     </div>
     <span class="footer-spacer"></span>
@@ -732,6 +762,66 @@
   </div>
 </dialog>
 
+<!-- Visual Side-by-Side Diff Dialog -->
+<dialog id="diffDialog" style="width:min(960px,calc(100vw - 20px))">
+  <div class="dialog-head">VISUAL_DIFF // Prompt Register Comparison<button data-close>×</button></div>
+  <div class="dialog-body">
+    <div class="diff-header-bar">
+      <div>
+        <label>PROMPT A (BASELINE):</label>
+        <select id="diffPromptA" class="pg-select" onchange="updateDiff()"></select>
+      </div>
+      <div>
+        <label>PROMPT B (REVISION):</label>
+        <select id="diffPromptB" class="pg-select" onchange="updateDiff()"></select>
+      </div>
+      <div>
+        <label>DIFF MODE:</label>
+        <div class="diff-view-mode">
+          <button class="action-btn primary" id="btnDiffSplit" onclick="setDiffViewMode('split')">SPLIT</button>
+          <button class="action-btn" id="btnDiffUnified" onclick="setDiffViewMode('unified')">UNIFIED</button>
+        </div>
+      </div>
+    </div>
+    <div class="diff-meta-deltas" id="diffMetaDeltas">
+      <span>Select prompts to compare.</span>
+    </div>
+    <div class="diff-container" id="diffContainer"></div>
+  </div>
+</dialog>
+
+<!-- AI Prompt Optimizer Dialog -->
+<dialog id="optimizerDialog" style="width:min(920px,calc(100vw - 20px))">
+  <div class="dialog-head">AI_PROMPT_OPTIMIZER // Compiler & Refiner<button data-close>×</button></div>
+  <div class="dialog-body">
+    <div class="optimizer-modes">
+      <button class="action-btn primary" id="btnOptCompress" onclick="setOptimizerMode('compress')">
+        🗜️ TOKEN COMPRESS (-30%)
+      </button>
+      <button class="action-btn" id="btnOptCot" onclick="setOptimizerMode('cot')">
+        🧠 CoT REASONING ENFORCER
+      </button>
+      <button class="action-btn" id="btnOptFewshot" onclick="setOptimizerMode('fewshot')">
+        🎯 FEW-SHOT GENERATOR (3 EXAMPLES)
+      </button>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin:10px 0">
+      <input class="command-search" id="optCustomGuidance" placeholder="Optional custom instructions (e.g. strict JSON, remove fluff, technical tone)">
+      <button class="action-btn primary" id="btnRunOptimizer" style="white-space:nowrap" onclick="runPromptOptimizer()">⚡ COMPILE & OPTIMIZE</button>
+    </div>
+    <div class="pg-telemetry" id="optTelemetry">
+      <span>MODE: <b id="optModeLabel">TOKEN COMPRESS</b></span>
+      <span>STATUS: <b id="optStatus">READY</b></span>
+    </div>
+    <pre class="pg-output" id="optOutput" style="min-height:220px">// Optimized prompt will stream here...</pre>
+    <div class="export-actions" id="optActions" style="margin-top:10px">
+      <button class="action-btn primary" onclick="copyOptimizedPrompt()">COPY OPTIMIZED</button>
+      <button class="action-btn" onclick="saveOptimizedToRemix()">SAVE TO REMIX</button>
+      <button class="action-btn" onclick="openDiffWithOriginal()">DIFF WITH ORIGINAL</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="registerDialog">
   <div class="dialog-head">REGISTER_PICKER // 1-5 select<button data-close>×</button></div>
   <div class="dialog-body"><div class="register-list" id="registerList"></div></div>
@@ -789,7 +879,7 @@ const getRowHeight=()=>window.innerWidth<=900?68:24;
 const DEFAULT_REGISTERS=[
  {id:"keep",name:"KEEP",color:"#57ff8f",key:"K"},{id:"review",name:"REVIEW",color:"#ffc857",key:"V"},{id:"drop",name:"DROP",color:"#ff5b5b",key:"D"},{id:"research",name:"RESEARCH",color:"#58d6ff",key:"S"},{id:"remix",name:"REMIX",color:"#ff68d4",key:"M"}
 ];
-const state={items:[],displayItems:[],total:0,facets:{types:{},tags:{},complexity:{},literacy:{}},cursor:0,pane:1,activeRegister:"keep",registers:{},filters:{registers:new Set(),types:new Set(),tags:new Set(),complexity:new Set(),literacy:new Set()},detailCache:new Map(),visualAnchor:null,treeVisible:true,previewVisible:true,commandCursor:0,requestId:0,authHeader:"",sort:"newest",byok:{}};
+const state={items:[],displayItems:[],total:0,facets:{types:{},tags:{},complexity:{},literacy:{}},cursor:0,pane:1,activeRegister:"keep",registers:{},filters:{registers:new Set(),types:new Set(),tags:new Set(),complexity:new Set(),literacy:new Set()},detailCache:new Map(),visualAnchor:null,treeVisible:true,previewVisible:true,commandCursor:0,requestId:0,authHeader:"",sort:"newest",byok:{},diffMode:"split",optimizerMode:"compress"};
 const $=id=>document.getElementById(id),esc=(v="")=>String(v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 const cmpScoreClass=n=>n>70?"score-high":n>35?"score-mid":"score-low";
@@ -967,6 +1057,7 @@ function renderVirtual(){
       }
       renderVirtual();
       loadCurrentDetail();
+      updateUrlHash(current()?.serial);
     };
     row.ondblclick=()=>{
       state.cursor=Number(row.dataset.index);
@@ -976,7 +1067,14 @@ function renderVirtual(){
   renderFooter();
 }
 
-/* Advanced Query Filter Parser */
+/* Deep Linking & URL State */
+function updateUrlHash(serial){
+  if(!serial)return;
+  const url=new URL(window.location);
+  url.searchParams.set("p",serial);
+  window.history.replaceState({},"",url);
+}
+
 function parseQueryOperators(rawQuery){
   const tokens=rawQuery.trim().split(/\s+/);
   const operators={tag:[],type:[],cmp:null,lit:null,tok:null,reg:[]};
@@ -1126,6 +1224,15 @@ async function loadPrompts(){
     state.total=data.total||items.length;
     state.facets=data.facets||{};
     $("totalCount").textContent=state.total;
+    
+    // Check initial deep link parameter
+    const urlParams=new URLSearchParams(window.location.search);
+    const targetSerial=urlParams.get("p")||window.location.hash.replace(/^#/,"");
+    if(targetSerial){
+      const foundIdx=items.findIndex(x=>x.serial===targetSerial);
+      if(foundIdx>=0)state.cursor=foundIdx;
+    }
+    
     applyLocalFilters();
     setStatus(`LOADED ${items.length}`);
   }catch(error){
@@ -1409,13 +1516,11 @@ async function runPlaygroundPrompt(){
   const model=$("pgModel").value.trim();
   const apiKey=$("pgApiKey").value.trim();
   
-  // Save key locally
   if(apiKey){
     state.byok[prov]=apiKey;
     saveBYOK();
   }
   
-  // Substitute variables
   let finalPrompt=state.currentPgPrompt||"";
   document.querySelectorAll(".pg-var-input").forEach(inp=>{
     const vName=inp.dataset.var;
@@ -1425,7 +1530,6 @@ async function runPlaygroundPrompt(){
   
   try{
     if(prov==="anthropic"){
-      // Anthropic direct call
       const res=await fetch(baseUrl,{
         method:"POST",
         headers:{
@@ -1464,7 +1568,6 @@ async function runPlaygroundPrompt(){
         }
       }
     }else{
-      // Standard OpenAI / OpenRouter / Ollama / Custom compatible endpoint
       const endpoint=`${baseUrl}/chat/completions`;
       const headers={"Content-Type":"application/json"};
       if(apiKey)headers.Authorization=`Bearer ${apiKey}`;
@@ -1529,6 +1632,259 @@ function clearPlaygroundOutput(){
   $("pgStatus").textContent="IDLE";
 }
 
+/* =========================================================
+   SPRINT 3: VISUAL SIDE-BY-SIDE DIFF ENGINE
+========================================================= */
+function computeLineDiff(textA, textB){
+  const linesA = (textA || "").split("\n");
+  const linesB = (textB || "").split("\n");
+  const N = linesA.length, M = linesB.length;
+  
+  // LCS dynamic programming table
+  const dp = Array.from({length: N + 1}, () => new Uint16Array(M + 1));
+  for(let i = 0; i < N; i++){
+    for(let j = 0; j < M; j++){
+      if(linesA[i] === linesB[j]) dp[i+1][j+1] = dp[i][j] + 1;
+      else dp[i+1][j+1] = Math.max(dp[i+1][j], dp[i][j+1]);
+    }
+  }
+  
+  // Backtracking diff items
+  let i = N, j = M;
+  const result = [];
+  while(i > 0 || j > 0){
+    if(i > 0 && j > 0 && linesA[i-1] === linesB[j-1]){
+      result.unshift({type: "same", valA: linesA[i-1], valB: linesB[j-1], lineA: i, lineB: j});
+      i--; j--;
+    } else if(j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])){
+      result.unshift({type: "add", valA: "", valB: linesB[j-1], lineA: "", lineB: j});
+      j--;
+    } else if(i > 0 && (j === 0 || dp[i][j-1] < dp[i-1][j])){
+      result.unshift({type: "del", valA: linesA[i-1], valB: "", lineA: i, lineB: ""});
+      i--;
+    }
+  }
+  return result;
+}
+
+function setDiffViewMode(mode){
+  state.diffMode = mode;
+  $("btnDiffSplit").classList.toggle("primary", mode === "split");
+  $("btnDiffUnified").classList.toggle("primary", mode === "unified");
+  updateDiff();
+}
+
+async function openDiff(targetBSerial = null){
+  const selA = $("diffPromptA"), selB = $("diffPromptB");
+  const options = state.items.map(item => `<option value="${esc(item.serial)}">${esc(item.serial)} - ${esc(item.title).slice(0, 45)}</option>`).join("");
+  selA.innerHTML = options;
+  selB.innerHTML = options;
+  
+  const cur = current();
+  if(cur) selA.value = cur.serial;
+  if(targetBSerial && state.items.some(x => x.serial === targetBSerial)){
+    selB.value = targetBSerial;
+  } else if(state.items.length > 1){
+    selB.value = state.items[cur && cur.serial === state.items[0].serial ? 1 : 0].serial;
+  }
+  
+  setDiffViewMode(state.diffMode || "split");
+  $("diffDialog").showModal();
+}
+
+async function updateDiff(){
+  const sA = $("diffPromptA").value, sB = $("diffPromptB").value;
+  const itemA = state.items.find(x => x.serial === sA), itemB = state.items.find(x => x.serial === sB);
+  if(!itemA || !itemB) return;
+  
+  const [detA, detB] = await Promise.all([detailFor(itemA), detailFor(itemB)]);
+  const textA = detA.prompt_body || "", textB = detB.prompt_body || "";
+  const diff = computeLineDiff(textA, textB);
+  
+  const adds = diff.filter(d => d.type === "add").length;
+  const dels = diff.filter(d => d.type === "del").length;
+  const tokA = itemA.token_estimate?.total?.max || 0, tokB = itemB.token_estimate?.total?.max || 0;
+  const deltaTok = tokB - tokA;
+  
+  $("diffMetaDeltas").innerHTML = `
+    <span><b>DIFF:</b> <span style="color:var(--acid)">+${adds} lines</span> / <span style="color:var(--red)">-${dels} lines</span></span>
+    <span class="footer-sep"></span>
+    <span><b>Δ TOKENS:</b> <span style="color:${deltaTok > 0 ? 'var(--amber)' : 'var(--acid)'}">${deltaTok >= 0 ? '+' : ''}${deltaTok} tok</span></span>
+    <span class="footer-sep"></span>
+    <span><b>Δ CMP:</b> ${itemB.complexity - itemA.complexity}</span>
+  `;
+  
+  const container = $("diffContainer");
+  if(state.diffMode === "split"){
+    const colA = diff.map(d => `<div class="diff-line ${d.type === 'del' ? 'diff-removed' : d.type === 'same' ? 'diff-same' : ''}"><span class="diff-line-num">${d.lineA}</span><span>${esc(d.valA)}</span></div>`).join("");
+    const colB = diff.map(d => `<div class="diff-line ${d.type === 'add' ? 'diff-added' : d.type === 'same' ? 'diff-same' : ''}"><span class="diff-line-num">${d.lineB}</span><span>${esc(d.valB)}</span></div>`).join("");
+    container.innerHTML = `<div class="diff-split"><div class="diff-col">${colA}</div><div class="diff-col">${colB}</div></div>`;
+  } else {
+    container.innerHTML = `<div class="diff-col">${diff.map(d => {
+      const cls = d.type === 'add' ? 'diff-added' : d.type === 'del' ? 'diff-removed' : 'diff-same';
+      const prefix = d.type === 'add' ? '+ ' : d.type === 'del' ? '- ' : '  ';
+      const lineNum = d.lineB || d.lineA;
+      return `<div class="diff-line ${cls}"><span class="diff-line-num">${lineNum}</span><span>${prefix}${esc(d.valB || d.valA)}</span></div>`;
+    }).join("")}</div>`;
+  }
+}
+
+/* =========================================================
+   SPRINT 3: AI PROMPT OPTIMIZER (Ctrl+O)
+========================================================= */
+const OPT_MODE_LABELS = {
+  compress: "TOKEN COMPRESS (-30%)",
+  cot: "CoT REASONING ENFORCER",
+  fewshot: "FEW-SHOT GENERATOR (3 EXAMPLES)"
+};
+
+function setOptimizerMode(mode){
+  state.optimizerMode = mode;
+  $("btnOptCompress").classList.toggle("primary", mode === "compress");
+  $("btnOptCot").classList.toggle("primary", mode === "cot");
+  $("btnOptFewshot").classList.toggle("primary", mode === "fewshot");
+  $("optModeLabel").textContent = OPT_MODE_LABELS[mode] || mode.toUpperCase();
+}
+
+async function openPromptOptimizer(){
+  const item = current();
+  if(!item){setStatus("SELECT_PROMPT_FIRST",0);return}
+  const detail = await detailFor(item);
+  state.currentOptPrompt = detail.prompt_body;
+  
+  setOptimizerMode(state.optimizerMode || "compress");
+  $("optOutput").textContent = "// Click [COMPILE & OPTIMIZE] to process prompt...";
+  $("optStatus").textContent = "READY";
+  $("optStatus").style.color = "var(--text)";
+  $("optimizerDialog").showModal();
+}
+
+async function runPromptOptimizer(){
+  const btn = $("btnRunOptimizer");
+  btn.disabled = true;
+  $("optStatus").textContent = "OPTIMIZING...";
+  $("optStatus").style.color = "var(--acid)";
+  $("optOutput").textContent = "";
+  
+  const mode = state.optimizerMode;
+  const guidance = $("optCustomGuidance").value.trim();
+  const rawPrompt = state.currentOptPrompt;
+  
+  let systemDirective = "";
+  if(mode === "compress"){
+    systemDirective = "You are a professional prompt compression compiler. Compress the provided prompt by 25-40% by eliminating redundant fluff, tightening constraints, and structuring tokens efficiently while preserving 100% of the original instructions and intent. Return ONLY the compressed prompt.";
+  } else if(mode === "cot"){
+    systemDirective = "You are an expert prompt engineering architect. Enhance the provided prompt by strictly enforcing Step-by-Step Chain-of-Thought reasoning steps, intermediate hypothesis validation, and structured output formatting. Return ONLY the enhanced CoT prompt.";
+  } else if(mode === "fewshot"){
+    systemDirective = "You are an AI prompt evaluation specialist. Generate 3 realistic, high-quality input-output Few-Shot demonstration examples for the provided prompt and embed them cleanly into the prompt body. Return ONLY the final prompt with few-shot examples included.";
+  }
+  if(guidance) systemDirective += ` Additional user guidance: ${guidance}`;
+  
+  const prov = $("pgProvider")?.value || "openai";
+  const baseUrl = ($("pgBaseUrl")?.value || "https://api.openai.com/v1").replace(/\/+$/,"");
+  const model = $("pgModel")?.value || "gpt-4o";
+  const apiKey = $("pgApiKey")?.value || state.byok[prov] || "";
+  
+  try {
+    let fullText = "";
+    if(apiKey && prov !== "anthropic"){
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: systemDirective },
+            { role: "user", content: rawPrompt }
+          ],
+          stream: true
+        })
+      });
+      if(!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      while(true){
+        const {done, value} = await reader.read();
+        if(done) break;
+        const lines = decoder.decode(value, {stream: true}).split("\n");
+        for(const line of lines){
+          if(line.startsWith("data: ")){
+            const chunk = line.slice(6).trim();
+            if(chunk === "[DONE]") break;
+            try{
+              const data = JSON.parse(chunk);
+              const delta = data.choices?.[0]?.delta?.content || "";
+              fullText += delta;
+              $("optOutput").textContent = fullText;
+            }catch{}
+          }
+        }
+      }
+    } else {
+      // Server fallback via analysis endpoint
+      const headers = {"Content-Type": "application/json"};
+      if(state.authHeader) headers.Authorization = state.authHeader;
+      const res = await fetch("/api/prompts/analyze", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          serials: [current().serial],
+          register_name: "OPTIMIZER",
+          mode: "synthesize",
+          user_instructions: `${systemDirective}\n${guidance}`
+        })
+      });
+      if(!res.ok) throw new Error(`HTTP ${res.status} - Set BYOK API key or Authenticate`);
+      const data = await res.json();
+      fullText = data.result?.synthesized_prompt || JSON.stringify(data.result, null, 2);
+      $("optOutput").textContent = fullText;
+    }
+    
+    state.lastOptimizedPrompt = fullText;
+    $("optStatus").textContent = "COMPLETED";
+    $("optStatus").style.color = "var(--acid)";
+  } catch(err) {
+    $("optStatus").textContent = "ERROR";
+    $("optStatus").style.color = "var(--red)";
+    $("optOutput").textContent = `OPTIMIZER_ERROR: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function copyOptimizedPrompt(){
+  if(!state.lastOptimizedPrompt) return;
+  navigator.clipboard.writeText(state.lastOptimizedPrompt);
+  setStatus("OPTIMIZED PROMPT COPIED");
+}
+
+function saveOptimizedToRemix(){
+  if(!state.lastOptimizedPrompt) return;
+  navigator.clipboard.writeText(state.lastOptimizedPrompt);
+  if(current()){
+    state.registers["remix"].serials.add(current().serial);
+    persistAndRender();
+  }
+  setStatus("COPIED & TAGGED IN REMIX");
+}
+
+function openDiffWithOriginal(){
+  if(!state.lastOptimizedPrompt) return;
+  $("optimizerDialog").close();
+  openDiff();
+}
+
+/* Shareable Deep Link */
+function copyShareLink(){
+  const item = current();
+  if(!item){setStatus("SELECT_PROMPT_FIRST",0);return}
+  const url = `${window.location.origin}${window.location.pathname}?p=${item.serial}`;
+  navigator.clipboard.writeText(url);
+  updateUrlHash(item.serial);
+  setStatus(`COPIED SHARE LINK [${item.serial}]`);
+}
+
 const COMMANDS=[
  ["1","Focus groups",()=>setPane(1)],
  ["2","Focus prompts",()=>setPane(2)],
@@ -1537,6 +1893,8 @@ const COMMANDS=[
  ["s","Sort selector",()=>toggleSortDropdown()],
  ["y","Yank menu (Multi-format copy)",openYankMenu],
  ["p","Interactive BYOK Playground",openPlayground],
+ ["d","Visual side-by-side Diff",()=>openDiff()],
+ ["O","AI Prompt Optimizer",openPromptOptimizer],
  ["r","Select color register",openRegisters],
  ["Space","Toggle mark",()=>toggleMark()],
  ["v","Visual range",toggleVisual],
@@ -1561,7 +1919,7 @@ function renderCommands(){
   $("commandList").querySelectorAll(".command").forEach(row=>row.onclick=()=>executeCommand(Number(row.dataset.commandIndex)));
 }
 function openHelp(){
-  $("helpGrid").innerHTML=COMMANDS.map(x=>`<kbd>${esc(x[0])}</kbd><span>${esc(x[1])}</span>`).join("")+"<kbd>j/k</kbd><span>Navigate rows</span><kbd>g/G</kbd><span>First / last row</span><kbd>u</kbd><span>Remove active mark</span><kbd>Esc</kbd><span>Cancel mode / close</span>";
+  $("helpGrid").innerHTML=COMMANDS.map(x=>`<kbd>${esc(x[0])}</kbd><span>${esc(x[1])}</span>`).join("")+"<kbd>j/k</kbd><span>Navigate rows</span><kbd>g/G</kbd><span>First / last row</span><kbd>u</kbd><span>Remove active mark</span><kbd>Ctrl+O</kbd><span>AI Optimizer</span><kbd>Esc</kbd><span>Cancel mode / close</span>";
   $("helpDialog").showModal();
 }
 function toggleTree(){
@@ -1712,6 +2070,7 @@ function handleKey(e){
   if(dialog||isTyping())return;
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();openCommands();return}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="p"){e.preventDefault();openPlayground();return}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="o"){e.preventDefault();openPromptOptimizer();return}
   const key=e.key;
   if(key==="1"||key==="2"||key==="3"){setPane(Number(key))}
   else if(key==="j"||key==="ArrowDown"){e.preventDefault();move(1)}
@@ -1727,6 +2086,8 @@ function handleKey(e){
   else if(key==="s"){e.preventDefault();toggleSortDropdown()}
   else if(key==="y"){openYankMenu()}
   else if(key==="p"){openPlayground()}
+  else if(key==="d"){openDiff()}
+  else if(key==="O"){openPromptOptimizer()}
   else if(key===":" ){openCommands()}
   else if(key==="?"){openHelp()}
   else if(key==="r"){openRegisters()}
@@ -1749,6 +2110,9 @@ const NAMED_COMMANDS={
   copy:copyCurrent,
   yank:openYankMenu,
   playground:openPlayground,
+  diff:()=>openDiff(),
+  optimize:openPromptOptimizer,
+  share:copyShareLink,
   analyze:openAnalysis,
   "toggle-mark":()=>toggleMark()
 };
