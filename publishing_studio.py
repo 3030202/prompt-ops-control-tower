@@ -348,7 +348,28 @@ async def rate_allowed(channel_id: str, kind: str) -> bool:
     return True
 
 
-async def send(channel: dict[str, Any], text: str, idem: str, kind: str, document: str = "", media_url: str = "", media_mode: str = "auto") -> dict[str, Any]:
+async def resolve_media_payload(media_url: str) -> tuple[str, Any] | None:
+    if not media_url:
+        return None
+    if media_url.startswith("/api/publishing/temp-media/"):
+        file_id = media_url.split("/")[-1]
+        upload = _temp_uploads.get(file_id)
+        if upload:
+            return "photo", (upload.get("filename", "image.png"), upload.get("bytes", b""), upload.get("content_type", "image/png"))
+    elif media_url.startswith("/api/publishing/cards/"):
+        card_hash = media_url.split("/")[-1]
+        raw_svg = await _app.state.redis.hget("promptops:publishing:cards", card_hash) if _app and hasattr(_app.state, "redis") else None
+        if not raw_svg:
+            raw_svg = _cards_cache.get(card_hash)
+        if raw_svg:
+            svg_bytes = raw_svg.encode("utf-8") if isinstance(raw_svg, str) else raw_svg
+            return "document", ("prompt_card.svg", svg_bytes, "image/svg+xml")
+    elif media_url.startswith(("http://", "https://")):
+        return "photo", media_url
+    return None
+
+
+async def send(channel: dict[str, Any], text: str, idem: str, kind: str, document: str = "", media_url: str = "", media_mode: str = "auto", media_urls: list[str] | None = None) -> dict[str, Any]:
     idem_key = f"{SENT_PREFIX}:{hashlib.sha256(idem.encode()).hexdigest()}"
     if not await _app.state.redis.set(idem_key, "1", nx=True, ex=30 * 86400):
         raise RuntimeError("Duplicate publication blocked")
@@ -356,47 +377,88 @@ async def send(channel: dict[str, Any], text: str, idem: str, kind: str, documen
     try:
         result = None
         sent_media = False
-        if media_url and media_mode != "none":
-            try:
-                if media_url.startswith("/api/publishing/temp-media/"):
-                    file_id = media_url.split("/")[-1]
-                    upload = _temp_uploads.get(file_id)
-                    if upload:
-                        filename = upload.get("filename", "image.png")
-                        content_type = upload.get("content_type", "image/png")
-                        data_bytes = upload.get("bytes", b"")
+        if media_mode != "none":
+            # Collect unique non-empty media urls
+            candidates: list[str] = []
+            if media_url:
+                candidates.append(media_url)
+            if media_urls:
+                for u in media_urls:
+                    if u and u not in candidates:
+                        candidates.append(u)
+
+            if len(candidates) >= 2:
+                try:
+                    media_items = []
+                    files = {}
+                    for idx, c_url in enumerate(candidates[:10]):
+                        resolved = await resolve_media_payload(c_url)
+                        if not resolved:
+                            continue
+                        m_type, m_val = resolved
+                        item_dict: dict[str, Any] = {"type": m_type}
+                        if not media_items:
+                            item_dict["caption"] = text[:1024]
+                            item_dict["parse_mode"] = "HTML"
+                        if isinstance(m_val, str):
+                            item_dict["media"] = m_val
+                        else:
+                            attach_key = f"file_{idx}"
+                            item_dict["media"] = f"attach://{attach_key}"
+                            files[attach_key] = m_val
+                        media_items.append(item_dict)
+
+                    if len(media_items) >= 2:
+                        result = await telegram_request("sendMediaGroup", {"chat_id": chat_id, "media": json.dumps(media_items)}, files=files or None)
+                        if len(text) > 1024:
+                            await telegram_request("sendMessage", {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"})
+                        sent_media = True
+                except Exception as group_exc:
+                    logging.warning("sendMediaGroup failed (%s), falling back to single media: %s", candidates, group_exc)
+                    await event("media_group_failed_fallback", channel_id=chat_id, error=str(group_exc))
+
+            if not sent_media and candidates:
+                primary_media = candidates[0]
+                try:
+                    if primary_media.startswith("/api/publishing/temp-media/"):
+                        file_id = primary_media.split("/")[-1]
+                        upload = _temp_uploads.get(file_id)
+                        if upload:
+                            filename = upload.get("filename", "image.png")
+                            content_type = upload.get("content_type", "image/png")
+                            data_bytes = upload.get("bytes", b"")
+                            if len(text) <= 1024:
+                                result = await telegram_request("sendPhoto", {"chat_id": chat_id, "caption": text[:1024], "parse_mode": "HTML"}, files={"photo": (filename, data_bytes, content_type)})
+                                sent_media = True
+                            else:
+                                result = await telegram_request("sendPhoto", {"chat_id": chat_id, "caption": text[:300] + "...", "parse_mode": "HTML"}, files={"photo": (filename, data_bytes, content_type)})
+                                await telegram_request("sendMessage", {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"})
+                                sent_media = True
+                    elif primary_media.startswith("/api/publishing/cards/"):
+                        card_hash = primary_media.split("/")[-1]
+                        raw_svg = await _app.state.redis.hget("promptops:publishing:cards", card_hash) if _app and hasattr(_app.state, "redis") else None
+                        if not raw_svg:
+                            raw_svg = _cards_cache.get(card_hash)
+                        if raw_svg:
+                            svg_bytes = raw_svg.encode("utf-8") if isinstance(raw_svg, str) else raw_svg
+                            if len(text) <= 1024:
+                                result = await telegram_request("sendDocument", {"chat_id": chat_id, "caption": text[:1024], "parse_mode": "HTML"}, files={"document": ("prompt_card.svg", svg_bytes, "image/svg+xml")})
+                                sent_media = True
+                            else:
+                                result = await telegram_request("sendDocument", {"chat_id": chat_id, "caption": text[:300] + "...", "parse_mode": "HTML"}, files={"document": ("prompt_card.svg", svg_bytes, "image/svg+xml")})
+                                await telegram_request("sendMessage", {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"})
+                                sent_media = True
+                    elif primary_media.startswith(("http://", "https://")):
                         if len(text) <= 1024:
-                            result = await telegram_request("sendPhoto", {"chat_id": chat_id, "caption": text[:1024], "parse_mode": "HTML"}, files={"photo": (filename, data_bytes, content_type)})
+                            result = await telegram_request("sendPhoto", {"chat_id": chat_id, "photo": primary_media, "caption": text[:1024], "parse_mode": "HTML"})
                             sent_media = True
                         else:
-                            result = await telegram_request("sendPhoto", {"chat_id": chat_id, "caption": text[:300] + "...", "parse_mode": "HTML"}, files={"photo": (filename, data_bytes, content_type)})
-                            await telegram_request("sendMessage", {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"})
+                            text_with_link = f'<a href="{primary_media}">&#8203;</a>' + text[:4090]
+                            result = await telegram_request("sendMessage", {"chat_id": chat_id, "text": text_with_link, "parse_mode": "HTML"})
                             sent_media = True
-                elif media_url.startswith("/api/publishing/cards/"):
-                    card_hash = media_url.split("/")[-1]
-                    raw_svg = await _app.state.redis.hget("promptops:publishing:cards", card_hash)
-                    if not raw_svg:
-                        raw_svg = _cards_cache.get(card_hash)
-                    if raw_svg:
-                        svg_bytes = raw_svg.encode("utf-8") if isinstance(raw_svg, str) else raw_svg
-                        if len(text) <= 1024:
-                            result = await telegram_request("sendDocument", {"chat_id": chat_id, "caption": text[:1024], "parse_mode": "HTML"}, files={"document": ("prompt_card.svg", svg_bytes, "image/svg+xml")})
-                            sent_media = True
-                        else:
-                            result = await telegram_request("sendDocument", {"chat_id": chat_id, "caption": text[:300] + "...", "parse_mode": "HTML"}, files={"document": ("prompt_card.svg", svg_bytes, "image/svg+xml")})
-                            await telegram_request("sendMessage", {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"})
-                            sent_media = True
-                elif media_url.startswith(("http://", "https://")):
-                    if len(text) <= 1024:
-                        result = await telegram_request("sendPhoto", {"chat_id": chat_id, "photo": media_url, "caption": text[:1024], "parse_mode": "HTML"})
-                        sent_media = True
-                    else:
-                        text_with_link = f'<a href="{media_url}">&#8203;</a>' + text[:4090]
-                        result = await telegram_request("sendMessage", {"chat_id": chat_id, "text": text_with_link, "parse_mode": "HTML"})
-                        sent_media = True
-            except Exception as media_exc:
-                logging.warning("Failed to send media (%s), falling back to text: %s", media_url, media_exc)
-                await event("media_send_failed_fallback_text", channel_id=chat_id, media_url=media_url, error=str(media_exc))
+                except Exception as media_exc:
+                    logging.warning("Failed to send media (%s), falling back to text: %s", primary_media, media_exc)
+                    await event("media_send_failed_fallback_text", channel_id=chat_id, media_url=primary_media, error=str(media_exc))
 
         if not sent_media:
             result = await telegram_request("sendMessage", {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"})
@@ -433,6 +495,15 @@ async def publish_draft(draft: dict[str, Any], kind: str = "manual") -> dict[str
     text = (draft.get("text", "") or "").replace("{daily_pin}", "").replace("{today_pin}", "").replace("{daily_date}", today_date)
     draft["text"] = text
 
+    media_list: list[str] = []
+    if draft.get("selected_media"):
+        media_list.append(draft["selected_media"])
+    elif draft.get("generated_card_url"):
+        media_list.append(draft["generated_card_url"])
+    for u in draft.get("media_urls", []):
+        if u and u not in media_list:
+            media_list.append(u)
+
     result = await send(
         channel,
         html.escape(text, quote=False),
@@ -441,6 +512,7 @@ async def publish_draft(draft: dict[str, Any], kind: str = "manual") -> dict[str
         draft.get("artifact_markdown", ""),
         media_url=draft.get("selected_media") or draft.get("generated_card_url") or "",
         media_mode=draft.get("media_mode", "auto"),
+        media_urls=media_list,
     )
     draft.update({"status": "published", "telegram_message_id": result.get("message_id"), "telegram_link": message_link(channel, result.get("message_id")), "published_at": iso_now(), "updated_at": iso_now()})
     draft["history"].append({"at": iso_now(), "action": "published", "kind": kind})
@@ -454,11 +526,88 @@ async def publish_draft(draft: dict[str, Any], kind: str = "manual") -> dict[str
 
 
 
+async def notify_draft_for_moderation(draft: dict[str, Any]) -> dict[str, Any] | None:
+    if not _app or not hasattr(_app.state, "config"):
+        return None
+    cfg = _app.state.config
+    token = getattr(cfg, "telegram_bot_token", None)
+    chat_id = getattr(cfg, "telegram_chat_id", None)
+    if not token or token == "your-bot-token-here" or not chat_id or chat_id == "-1001234567890":
+        return None
+
+    webapp_url = getattr(cfg, "telegram_webapp_url", "") or "https://0x101.lol/webapp"
+    channel = await get_item(CHANNELS_KEY, draft.get("channel_id", "")) if draft.get("channel_id") else None
+    channel_name = channel.get("name") if channel else (draft.get("channel_id") or "Целевой канал не указан")
+    mode = draft.get("mode", "my_take")
+    title = draft.get("title") or "Без названия"
+    text_content = draft.get("text") or ""
+    preview_snippet = text_content[:350] + ("..." if len(text_content) > 350 else "")
+
+    admin_msg = (
+        f"📝 <b>[Модерация черновика]</b> <code>#{draft['id'][:8]}</code>\n\n"
+        f"📢 <b>Канал:</b> <code>{html.escape(str(channel_name))}</code>\n"
+        f"🎯 <b>Режим:</b> <code>{html.escape(mode)}</code>\n"
+        f"📌 <b>Заголовок:</b> <b>{html.escape(title)}</b>\n\n"
+        f"📄 <b>Превью текста:</b>\n<i>{html.escape(preview_snippet)}</i>"
+    )
+
+    markup = {
+        "inline_keyboard": [
+            [
+                {"text": "🚀 Опубликовать", "callback_data": f"pub:draft:{draft['id']}"},
+                {"text": "🔄 Перегенерировать", "callback_data": f"regen:draft:{draft['id']}"},
+            ],
+            [
+                {"text": "🗑 В архив", "callback_data": f"archive:draft:{draft['id']}"},
+                {"text": "⚡ Mini App", "web_app": {"url": f"{webapp_url}#draft-{draft['id']}"}},
+            ]
+        ]
+    }
+
+    try:
+        res = await _app.state.http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": admin_msg, "parse_mode": "HTML", "reply_markup": markup},
+            timeout=10.0
+        )
+        return res.json()
+    except Exception as exc:
+        logging.warning("Failed to notify moderator: %s", exc)
+        return None
+
+
+async def regenerate_draft_text(draft_id: str) -> dict[str, Any]:
+    draft = await get_item(DRAFTS_KEY, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    records = await _load_records([draft.get("artifact_id", "")]) if _load_records and draft.get("artifact_id") else []
+    record = records[0] if records else draft.get("source", {})
+    mode = draft.get("mode", "my_take")
+    artifact_type = draft.get("artifact_type") or None
+    style = await get_item(STYLES_KEY, str(draft.get("style_id", ""))) if draft.get("style_id") else None
+    generated, usage, cost = await generate_post(record, mode, style, artifact_type)
+
+    draft["title"] = generated["title"]
+    draft["text"] = generated["text"]
+    draft["artifact_markdown"] = generated.get("artifact_markdown", "")
+    draft["tokens"] = usage
+    draft["cost_usd"] = round(draft.get("cost_usd", 0.0) + cost, 6)
+    draft["updated_at"] = iso_now()
+    draft.setdefault("history", []).append({"at": iso_now(), "action": "regenerated", "kind": "bot_inline"})
+    await save_item(DRAFTS_KEY, draft)
+    await event("draft_regenerated", draft_id=draft["id"])
+    return draft
+
+
 async def review(record: dict[str, Any], rule: dict[str, Any], reason: str) -> None:
     draft = await create_draft(record, rule)
     draft["review_reason"] = reason
     await save_item(DRAFTS_KEY, draft)
     await event("live_review", draft_id=draft["id"], rule_id=rule["id"], reason=reason)
+    try:
+        await notify_draft_for_moderation(draft)
+    except Exception as notify_exc:
+        logging.warning("Moderation notify failed: %s", notify_exc)
 
 
 async def ai_match(rule: dict[str, Any], record: dict[str, Any]) -> tuple[bool, float, str]:
@@ -568,6 +717,15 @@ async def scheduler_tick() -> None:
                 except Exception as exc:
                     draft["review_reason"] = str(exc)
                     await save_item(DRAFTS_KEY, draft)
+                    try:
+                        await notify_draft_for_moderation(draft)
+                    except Exception:
+                        pass
+            else:
+                try:
+                    await notify_draft_for_moderation(draft)
+                except Exception as notify_exc:
+                    logging.warning("Moderation notify failed: %s", notify_exc)
 
 
 async def scheduler_loop() -> None:
@@ -777,16 +935,13 @@ async def get_temp_media(file_id: str) -> Response:
 
 @router.post("/api/post-drafts/{item_id}/regenerate")
 async def regenerate(item_id: str, _: str = Depends(authenticate)) -> JSONResponse:
-    item = await get_item(DRAFTS_KEY, item_id)
-    records = await _load_records([item["artifact_id"]]) if item and _load_records else []
-    if not item or not records:
-        raise HTTPException(404, "Draft or artifact not found")
-    style = await get_item(STYLES_KEY, item.get("style_id", "")) if item.get("style_id") else None
-    generated, usage, cost = await generate_post(records[0], item["mode"], style, item.get("artifact_type") or None)
-    item.update({**generated, "tokens": usage, "cost_usd": cost, "updated_at": iso_now()})
-    item["history"].append({"at": iso_now(), "action": "regenerated"})
-    await save_item(DRAFTS_KEY, item)
-    return JSONResponse({"ok": True, "item": item})
+    try:
+        item = await regenerate_draft_text(item_id)
+        return JSONResponse({"ok": True, "item": item})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 @router.post("/api/post-drafts/{item_id}/approve")

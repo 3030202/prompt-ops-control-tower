@@ -35,6 +35,14 @@ from publishing_studio import (
     evaluate_ingested_record,
     scheduler_loop as publishing_scheduler_loop,
     router as publishing_router,
+    DRAFTS_KEY,
+    CHANNELS_KEY,
+    get_item as studio_get_item,
+    list_items as studio_list_items,
+    save_item as studio_save_item,
+    publish_draft,
+    regenerate_draft_text,
+    notify_draft_for_moderation,
 )
 
 from prompt_ops_mcp import PromptOpsMCPBackend, configure_mcp, mcp, mcp_http_app
@@ -2707,6 +2715,7 @@ async def init_telegram_bot_menu(http_client: AsyncClient, cfg: Config) -> None:
     commands = [
         {"command": "start", "description": "🚀 Главное меню и WebApp"},
         {"command": "webapp", "description": "⚡ Открыть Telegram WebApp"},
+        {"command": "digest", "description": "📝 Модерация и очередь постов"},
         {"command": "status", "description": "📊 Статус Control Tower"},
         {"command": "prompts", "description": "📑 Каталог промптов"},
         {"command": "latest", "description": "🔥 Свежие находки и сигналы"},
@@ -2757,6 +2766,32 @@ async def send_telegram_bot_message(
         return None
 
 
+async def edit_telegram_bot_message(
+    http_client: AsyncClient,
+    token: str,
+    chat_id: int | str,
+    message_id: int,
+    text: str,
+    reply_markup: dict[str, Any] | None = None,
+    parse_mode: str = "HTML",
+) -> dict[str, Any] | None:
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": False,
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    try:
+        res = await http_client.post(f"https://api.telegram.org/bot{token}/editMessageText", json=payload, timeout=10.0)
+        return res.json()
+    except Exception as exc:
+        logging.warning("Failed to edit Telegram bot message: %s", exc)
+        return None
+
+
 async def handle_telegram_bot_update(
     http_client: AsyncClient,
     update: dict[str, Any],
@@ -2771,15 +2806,135 @@ async def handle_telegram_bot_update(
         data = cq.get("data", "")
         msg = cq.get("message") or {}
         chat_id = msg.get("chat", {}).get("id")
-
-        if cq_id:
-            try:
-                await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id}, timeout=5.0)
-            except Exception:
-                pass
+        msg_id = msg.get("message_id")
 
         if not chat_id:
             return
+
+        is_admin_chat = str(chat_id) == str(cfg.telegram_chat_id)
+
+        # Moderation callbacks
+        if data.startswith("pub:draft:"):
+            if not is_admin_chat:
+                if cq_id:
+                    with contextlib.suppress(Exception):
+                        await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": "⚠️ Доступ разрешен только в чате управления", "show_alert": True}, timeout=5.0)
+                return
+            draft_id = data[len("pub:draft:"):]
+            draft = await studio_get_item(DRAFTS_KEY, draft_id)
+            if not draft:
+                if cq_id:
+                    with contextlib.suppress(Exception):
+                        await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": "⚠️ Черновик не найден", "show_alert": True}, timeout=5.0)
+                return
+            if draft.get("status") == "published":
+                if cq_id:
+                    with contextlib.suppress(Exception):
+                        await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": "⚠️ Черновик уже опубликован", "show_alert": True}, timeout=5.0)
+                return
+            try:
+                updated_draft = await publish_draft(draft, kind="bot_inline")
+                ch = await studio_get_item(CHANNELS_KEY, updated_draft.get("channel_id", "")) if updated_draft.get("channel_id") else None
+                ch_name = ch.get("name") if ch else (updated_draft.get("channel_id") or "Telegram")
+                channel_link = updated_draft.get("telegram_link") or ""
+                done_text = (
+                    f"✅ <b>Черновик #{draft_id[:8]} успешно опубликован!</b>\n\n"
+                    f"📢 <b>Канал:</b> <code>{html.escape(str(ch_name))}</code>\n"
+                    f"📌 <b>Заголовок:</b> <b>{html.escape(draft.get('title', ''))}</b>"
+                )
+                if channel_link:
+                    done_text += f"\n🔗 <a href='{html.escape(channel_link)}'>Открыть пост в канале</a>"
+                done_markup = {
+                    "inline_keyboard": [
+                        [{"text": "🔗 Открыть пост в Telegram", "url": channel_link}] if channel_link else [{"text": "⚡ WebApp", "web_app": {"url": webapp_url}}]
+                    ]
+                }
+                if msg_id:
+                    await edit_telegram_bot_message(http_client, token, chat_id, msg_id, done_text, done_markup)
+                if cq_id:
+                    with contextlib.suppress(Exception):
+                        await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": "🚀 Черновик успешно опубликован!"}, timeout=5.0)
+            except Exception as pub_exc:
+                logging.warning("Inline publication error: %s", pub_exc)
+                if cq_id:
+                    with contextlib.suppress(Exception):
+                        await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": f"❌ Ошибка публикации: {str(pub_exc)[:80]}", "show_alert": True}, timeout=5.0)
+            return
+
+        if data.startswith("regen:draft:"):
+            if not is_admin_chat:
+                if cq_id:
+                    with contextlib.suppress(Exception):
+                        await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": "⚠️ Доступ разрешен только в чате управления", "show_alert": True}, timeout=5.0)
+                return
+            draft_id = data[len("regen:draft:"):]
+            try:
+                updated_draft = await regenerate_draft_text(draft_id)
+                ch = await studio_get_item(CHANNELS_KEY, updated_draft.get("channel_id", "")) if updated_draft.get("channel_id") else None
+                channel_name = ch.get("name") if ch else (updated_draft.get("channel_id") or "Целевой канал не указан")
+                mode = updated_draft.get("mode", "my_take")
+                title = updated_draft.get("title") or "Без названия"
+                text_content = updated_draft.get("text") or ""
+                preview_snippet = text_content[:350] + ("..." if len(text_content) > 350 else "")
+
+                new_msg = (
+                    f"📝 <b>[Модерация черновика]</b> <code>#{draft_id[:8]}</code> <i>(перегенерирован)</i>\n\n"
+                    f"📢 <b>Канал:</b> <code>{html.escape(str(channel_name))}</code>\n"
+                    f"🎯 <b>Режим:</b> <code>{html.escape(mode)}</code>\n"
+                    f"📌 <b>Заголовок:</b> <b>{html.escape(title)}</b>\n\n"
+                    f"📄 <b>Превью текста:</b>\n<i>{html.escape(preview_snippet)}</i>"
+                )
+                new_markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "🚀 Опубликовать", "callback_data": f"pub:draft:{draft_id}"},
+                            {"text": "🔄 Перегенерировать", "callback_data": f"regen:draft:{draft_id}"},
+                        ],
+                        [
+                            {"text": "🗑 В архив", "callback_data": f"archive:draft:{draft_id}"},
+                            {"text": "⚡ Mini App", "web_app": {"url": f"{webapp_url}#draft-{draft_id}"}},
+                        ]
+                    ]
+                }
+                if msg_id:
+                    await edit_telegram_bot_message(http_client, token, chat_id, msg_id, new_msg, new_markup)
+                if cq_id:
+                    with contextlib.suppress(Exception):
+                        await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": "🔄 Текст успешно перегенерирован!"}, timeout=5.0)
+            except Exception as regen_exc:
+                logging.warning("Inline regeneration error: %s", regen_exc)
+                if cq_id:
+                    with contextlib.suppress(Exception):
+                        await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": f"❌ Ошибка регенерации: {str(regen_exc)[:80]}", "show_alert": True}, timeout=5.0)
+            return
+
+        if data.startswith("archive:draft:"):
+            if not is_admin_chat:
+                if cq_id:
+                    with contextlib.suppress(Exception):
+                        await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": "⚠️ Доступ разрешен только в чате управления", "show_alert": True}, timeout=5.0)
+                return
+            draft_id = data[len("archive:draft:"):]
+            draft = await studio_get_item(DRAFTS_KEY, draft_id)
+            if draft:
+                draft["status"] = "archived"
+                draft["updated_at"] = iso_now()
+                draft.setdefault("history", []).append({"at": iso_now(), "action": "archived", "kind": "bot_inline"})
+                await studio_save_item(DRAFTS_KEY, draft)
+                archived_text = (
+                    f"🗑 <b>Черновик #{draft_id[:8]} перемещен в архив</b>\n\n"
+                    f"📌 <b>Заголовок:</b> {html.escape(draft.get('title', ''))}"
+                )
+                if msg_id:
+                    await edit_telegram_bot_message(http_client, token, chat_id, msg_id, archived_text, None)
+            if cq_id:
+                with contextlib.suppress(Exception):
+                    await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id, "text": "🗑 Черновик в архиве"}, timeout=5.0)
+            return
+
+        if cq_id:
+            with contextlib.suppress(Exception):
+                await http_client.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery", json={"callback_query_id": cq_id}, timeout=5.0)
 
         if data == "cmd:status":
             prompts = await load_prompt_catalog(MAX_PROMPT_CATALOG)
@@ -2897,6 +3052,33 @@ async def handle_telegram_bot_update(
                 ]
             }
             await send_telegram_bot_message(http_client, token, chat_id, body, markup)
+            return
+
+        if cmd in {"/digest", "/queue", "/review"}:
+            is_admin_chat = str(chat_id) == str(cfg.telegram_chat_id)
+            if not is_admin_chat:
+                await send_telegram_bot_message(http_client, token, chat_id, "⚠️ Команда модерации доступна только в авторизованном чате управления.")
+                return
+            all_drafts = await studio_list_items(DRAFTS_KEY)
+            pending = [d for d in all_drafts if d.get("status") in {"draft", "review"}]
+            if not pending:
+                empty_msg = (
+                    f"📝 <b>Очередь модерации пуста</b>\n\n"
+                    f"Все посты опубликованы или в архиве. Новые черновики генерируются автоматически по расписанию и из AI-радара."
+                )
+                markup = {
+                    "inline_keyboard": [
+                        [{"text": "⚡ Открыть Студию в WebApp", "web_app": {"url": webapp_url}}],
+                        [{"text": "📊 Статус системы", "callback_data": "cmd:status"}]
+                    ]
+                }
+                await send_telegram_bot_message(http_client, token, chat_id, empty_msg, markup)
+                return
+
+            header = f"📝 <b>Очередь постов на модерацию ({len(pending)}):</b>"
+            await send_telegram_bot_message(http_client, token, chat_id, header)
+            for d in pending[:5]:
+                await notify_draft_for_moderation(d)
             return
 
         if cmd == "/status":

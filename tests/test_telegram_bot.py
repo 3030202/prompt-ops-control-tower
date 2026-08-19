@@ -176,6 +176,139 @@ class TestTelegramBot(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_handle_digest_command(self):
+        async def run():
+            mock_client = AsyncMock(spec=AsyncClient)
+            mock_resp = MagicMock()
+            mock_resp.json = MagicMock(return_value={"ok": True})
+            mock_client.post = AsyncMock(return_value=mock_resp)
+
+            update = {
+                "update_id": 1004,
+                "message": {
+                    "chat": {"id": -1001234567890},
+                    "text": "/digest",
+                }
+            }
+
+            fake_draft = {
+                "id": "draft-123456",
+                "title": "Test Digest Title",
+                "text": "Post text preview",
+                "mode": "my_take",
+                "status": "review",
+                "channel_id": "chan-1",
+            }
+
+            with patch("prompt_ops_app.studio_list_items", AsyncMock(return_value=[fake_draft])), \
+                 patch("prompt_ops_app.notify_draft_for_moderation", AsyncMock(return_value={"ok": True})) as mock_notify:
+                await handle_telegram_bot_update(mock_client, update, self.cfg)
+                self.assertTrue(mock_notify.called)
+
+        asyncio.run(run())
+
+    def test_handle_moderation_callback_publish(self):
+        async def run():
+            mock_client = AsyncMock(spec=AsyncClient)
+            mock_resp = MagicMock()
+            mock_resp.json = MagicMock(return_value={"ok": True})
+            mock_client.post = AsyncMock(return_value=mock_resp)
+
+            update = {
+                "update_id": 1005,
+                "callback_query": {
+                    "id": "cq_pub_1",
+                    "data": "pub:draft:draft-123456",
+                    "message": {
+                        "chat": {"id": -1001234567890},
+                        "message_id": 555,
+                    }
+                }
+            }
+
+            fake_draft = {
+                "id": "draft-123456",
+                "title": "Publishable Draft",
+                "status": "review",
+                "channel_id": "chan-1",
+            }
+            published_draft = {
+                **fake_draft,
+                "status": "published",
+                "telegram_link": "https://t.me/testchannel/123",
+            }
+
+            with patch("prompt_ops_app.studio_get_item", AsyncMock(return_value=fake_draft)), \
+                 patch("prompt_ops_app.publish_draft", AsyncMock(return_value=published_draft)) as mock_pub:
+                await handle_telegram_bot_update(mock_client, update, self.cfg)
+                self.assertTrue(mock_pub.called)
+                
+            # Verify editMessageText and answerCallbackQuery were called
+            methods_called = [call[0][0] for call in mock_client.post.call_args_list]
+            self.assertTrue(any("editMessageText" in m for m in methods_called))
+            self.assertTrue(any("answerCallbackQuery" in m for m in methods_called))
+
+        asyncio.run(run())
+
+    def test_handle_moderation_callback_unauthorized(self):
+        async def run():
+            mock_client = AsyncMock(spec=AsyncClient)
+            mock_resp = MagicMock()
+            mock_resp.json = MagicMock(return_value={"ok": True})
+            mock_client.post = AsyncMock(return_value=mock_resp)
+
+            update = {
+                "update_id": 1006,
+                "callback_query": {
+                    "id": "cq_unauth",
+                    "data": "pub:draft:draft-123456",
+                    "message": {
+                        "chat": {"id": 99999999},  # Unauthorized chat
+                        "message_id": 556,
+                    }
+                }
+            }
+
+            with patch("prompt_ops_app.publish_draft", AsyncMock()) as mock_pub:
+                await handle_telegram_bot_update(mock_client, update, self.cfg)
+                self.assertFalse(mock_pub.called)
+
+        asyncio.run(run())
+
+    def test_handle_moderation_callback_archive(self):
+        async def run():
+            mock_client = AsyncMock(spec=AsyncClient)
+            mock_resp = MagicMock()
+            mock_resp.json = MagicMock(return_value={"ok": True})
+            mock_client.post = AsyncMock(return_value=mock_resp)
+
+            update = {
+                "update_id": 1007,
+                "callback_query": {
+                    "id": "cq_arch_1",
+                    "data": "archive:draft:draft-123456",
+                    "message": {
+                        "chat": {"id": -1001234567890},
+                        "message_id": 557,
+                    }
+                }
+            }
+
+            fake_draft = {
+                "id": "draft-123456",
+                "title": "Archivable Draft",
+                "status": "review",
+            }
+
+            with patch("prompt_ops_app.studio_get_item", AsyncMock(return_value=fake_draft)), \
+                 patch("prompt_ops_app.studio_save_item", AsyncMock()) as mock_save:
+                await handle_telegram_bot_update(mock_client, update, self.cfg)
+                self.assertTrue(mock_save.called)
+                saved_draft = mock_save.call_args[0][1]
+                self.assertEqual(saved_draft["status"], "archived")
+
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()
