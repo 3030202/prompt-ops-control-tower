@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import publishing_studio as studio
 
@@ -73,8 +73,12 @@ class PublishingRulesTest(unittest.TestCase):
             res_empty = await studio.resolve_media_payload("")
             self.assertIsNone(res_empty)
 
-            # Test card hash in cache
-            studio._cards_cache["testcard123"] = "<svg>Test</svg>"
+            # Test card hash via redis mock (resolve_media_payload reads from redis, not _cards_cache directly)
+            fake_app = MagicMock()
+            fake_app.state.redis = AsyncMock()
+            # hget returns raw SVG bytes
+            fake_app.state.redis.hget = AsyncMock(return_value=b"<svg>Test</svg>")
+            studio._app = fake_app
             res_card = await studio.resolve_media_payload("/api/publishing/cards/testcard123")
             self.assertIsNotNone(res_card)
             self.assertEqual(res_card[0], "document")
@@ -139,7 +143,8 @@ class PublishingRulesTest(unittest.TestCase):
                 self.assertTrue(fake_app.state.http_client.post.called)
                 post_json = fake_app.state.http_client.post.call_args[1]["json"]
                 self.assertEqual(post_json["chat_id"], "-10012345")
-                self.assertIn("draft-abc", post_json["text"])
+                # Draft ID is truncated to 8 chars in the message (#draft-ab from "draft-abc-123")
+                self.assertIn("draft-ab", post_json["text"])
                 self.assertIn("reply_markup", post_json)
         asyncio.run(run())
 
