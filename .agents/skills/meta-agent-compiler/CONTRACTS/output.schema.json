@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agentbuilder://contracts/v4/meta_agent_compiler_worker_output.schema.json",
+  "title": "Meta-Agent Compiler Worker Output",
+  "description": "Выходной контракт для узла meta_agent_compiler_worker",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trace_context", "execution_status", "routing", "result", "error"],
+  "properties": {
+    "trace_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "span_id", "parent_span_id", "trace_flags"],
+      "properties": {
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "minLength": 32,
+          "maxLength": 32
+        },
+        "span_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "minLength": 16,
+          "maxLength": 16
+        },
+        "parent_span_id": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{16}$",
+          "minLength": 16,
+          "maxLength": 16
+        },
+        "trace_flags": {
+          "type": "string",
+          "enum": ["00", "01"]
+        },
+        "traceparent": {
+          "type": "string",
+          "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$"
+        }
+      }
+    },
+    "execution_status": {
+      "type": "string",
+      "enum": ["SUCCESS", "RETRY_REQUIRED", "FATAL_FAILURE", "HANDOFF", "CIRCUIT_OPEN"],
+      "description": "Статус выполнения узла"
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["next_node", "fallback_node"],
+      "properties": {
+        "next_node": {
+          "type": ["string", "null"],
+          "description": "Следующий узел при успехе"
+        },
+        "fallback_node": {
+          "type": ["string", "null"],
+          "description": "Резервный узел при сбое"
+        },
+        "dead_letter_node": {
+          "type": ["string", "null"],
+          "description": "Узел dead letter при фатальном сбое"
+        },
+        "handoff_reason": {
+          "type": ["string", "null"],
+          "description": "Причина передачи в другой узел"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task_intent": {
+          "type": "string",
+          "description": "Синтезированный интент задачи"
+        },
+        "inferred_topology": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Список узлов графа"
+        },
+        "target_node_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$",
+          "description": "Идентификатор целевого узла"
+        },
+        "graph_role": {
+          "type": "string",
+          "enum": ["Worker", "Orchestrator", "Critic", "IngressRouter", "EgressGateway", "DeadLetter"]
+        },
+        "execution_model": {
+          "type": "string",
+          "enum": ["STATELESS_FN", "STATEFUL_ORCHESTRATOR"]
+        },
+        "compiled_system_prompt": {
+          "type": "string",
+          "description": "Детерминированный системный промпт узла"
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "is_retryable"],
+      "properties": {
+        "code": {
+          "type": ["string", "null"],
+          "enum": [
+            null, "VALIDATION_ERR", "TIMEOUT", "DEP_FAILURE", "SCHEMA_DRIFT",
+            "PAYLOAD_OVERFLOW", "UNPROCESSABLE_ENTITY", "CIRCUIT_OPEN",
+            "DEADLOCK", "IDEMPOTENCY_CONFLICT", "RACE_DETECTED"
+          ]
+        },
+        "message": { "type": ["string", "null"] },
+        "is_retryable": { "type": "boolean" },
+        "failed_node": { "type": ["string", "null"] },
+        "stack_trace": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

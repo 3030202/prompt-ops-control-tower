@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agentbuilder://contracts/v4/meta_agent_compiler_worker_input.schema.json",
+  "title": "Meta-Agent Compiler Worker Input",
+  "description": "Входной контракт для узла meta_agent_compiler_worker",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trace_context", "task_metadata", "payload"],
+  "properties": {
+    "trace_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "span_id", "parent_span_id", "trace_flags"],
+      "properties": {
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "32 hex-символа (16 байт), all zeroes forbidden",
+          "minLength": 32,
+          "maxLength": 32
+        },
+        "span_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "16 hex-символов (8 байт), all zeroes forbidden",
+          "minLength": 16,
+          "maxLength": 16
+        },
+        "parent_span_id": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{16}$",
+          "minLength": 16,
+          "maxLength": 16
+        },
+        "trace_flags": {
+          "type": "string",
+          "enum": ["00", "01"],
+          "description": "бит sampled: 00 = нет, 01 = да"
+        },
+        "traceparent": {
+          "type": "string",
+          "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$",
+          "description": "W3C Trace Context format: version-traceid-parentid-flags"
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Опциональный бизнес-идентификатор"
+        }
+      }
+    },
+    "task_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "attempt_number", "max_attempts"],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Уникальный идентификатор задачи"
+        },
+        "attempt_number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Текущая попытка выполнения"
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "description": "Максимальное количество попыток"
+        }
+      }
+    },
+    "circuit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consecutive_failures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "type": "string",
+          "enum": ["CLOSED", "OPEN", "HALF_OPEN"]
+        }
+      },
+      "description": "Circuit breaker состояние (устанавливается orchestrator)"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_task_description"],
+      "properties": {
+        "raw_task_description": {
+          "type": "string",
+          "minLength": 5,
+          "description": "Неструктурированное описание задачи"
+        },
+        "target_node_hint": {
+          "type": ["string", "null"],
+          "description": "Подсказка для целевого узла"
+        },
+        "preferred_execution_model": {
+          "type": ["string", "null"],
+          "enum": [null, "STATELESS_FN", "STATEFUL_ORCHESTRATOR"]
+        }
+      }
+    },
+    "error_diff": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["code", "message", "is_retryable", "failed_node"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "VALIDATION_ERR", "TIMEOUT", "DEP_FAILURE", "SCHEMA_DRIFT",
+            "PAYLOAD_OVERFLOW", "UNPROCESSABLE_ENTITY", "CIRCUIT_OPEN",
+            "DEADLOCK", "IDEMPOTENCY_CONFLICT", "RACE_DETECTED"
+          ]
+        },
+        "message": { "type": "string" },
+        "is_retryable": { "type": "boolean" },
+        "failed_node": { "type": "string" },
+        "stack_trace": { "type": ["string", "null"] }
+      },
+      "description": "Информация об ошибке при retry"
+    }
+  }
+}
