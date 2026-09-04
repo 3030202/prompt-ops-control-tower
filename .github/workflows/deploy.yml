@@ -1,0 +1,85 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches: [main]
+
+# Только один деплой одновременно, новый пуш отменяет предыдущий
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Тесты должны пройти перед деплоем ──────────────────────────────────
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  # ── 2. Деплой на сервер ────────────────────────────────────────────────────
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:        ${{ secrets.SSH_HOST }}
+          username:    ${{ secrets.SSH_USER }}
+          key:         ${{ secrets.SSH_PRIVATE_KEY }}
+          port:        ${{ secrets.SSH_PORT || '22' }}
+          script_stop: true   # прерваться при первой ошибке
+          script: |
+            set -euo pipefail
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+
+            echo "=== [1/5] Переходим в рабочую директорию ==="
+            cd "$DEPLOY_PATH"
+
+            echo "=== [2/5] Сохраняем текущий коммит для возможного rollback ==="
+            PREV_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+            echo "Предыдущий коммит: $PREV_COMMIT"
+
+            echo "=== [3/5] Получаем свежий код ==="
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "=== [4/5] Пересборка и запуск (volumes не трогаем) ==="
+            docker compose pull --quiet 2>/dev/null || true
+            docker compose up -d --build --remove-orphans
+
+            echo "=== [5/5] Healthcheck (ждём до 60с) ==="
+            HEALTH_URL="http://localhost:8000/health"
+            MAX_WAIT=60
+            WAITED=0
+            until curl -sf --max-time 5 "$HEALTH_URL" > /dev/null 2>&1; do
+              if [ $WAITED -ge $MAX_WAIT ]; then
+                echo "HEALTHCHECK FAILED после ${MAX_WAIT}s — запускаем rollback..."
+
+                echo "--- ROLLBACK: откатываемся на $PREV_COMMIT ---"
+                git reset --hard "$PREV_COMMIT"
+                docker compose up -d --build --remove-orphans
+
+                echo "--- ROLLBACK: ждём 20с и перепроверяем ---"
+                sleep 20
+                if curl -sf --max-time 5 "$HEALTH_URL" > /dev/null 2>&1; then
+                  echo "Rollback УСПЕШЕН, сервис восстановлен на $PREV_COMMIT"
+                else
+                  echo "КРИТИЧНО: rollback тоже не помог, требуется ручное вмешательство!"
+                fi
+                exit 1
+              fi
+              echo "Ждём сервис... (${WAITED}s / ${MAX_WAIT}s)"
+              sleep 5
+              WAITED=$((WAITED + 5))
+            done
+
+            echo ""
+            echo "✅ ДЕПЛОЙ УСПЕШЕН"
+            echo "   Коммит: $(git rev-parse --short HEAD)"
+            echo "   Сервис: $HEALTH_URL → 200 OK"
+            echo "   Контейнеры:"
+            docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"

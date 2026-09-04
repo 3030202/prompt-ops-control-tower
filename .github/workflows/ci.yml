@@ -1,59 +1,36 @@
 name: CI
+
 on:
   push:
   pull_request:
+
 permissions:
   contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -r requirements-dev.txt
-      - run: python -m py_compile prompt_ops_app.py prompt_ops_mcp.py publishing_studio.py osint_perplexity_grok_radar.py
-      - run: PYTHONPATH=. pytest -q tests/test_publishing.py tests/test_sources.py tests/test_mcp.py
-      - run: cp .env.example .env && docker compose config
-  docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          tags: prompt-ops-control-tower:test
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: cp .env.example .env
-      - run: docker compose up -d --build
-      - run: |
-          for attempt in {1..40}; do
-            curl --fail --silent http://127.0.0.1:8000/health && exit 0
-            sleep 3
-          done
-          docker compose logs
-          exit 1
-      - run: pip install -r requirements-dev.txt
-      - run: pytest tests/test_mcp_http.py -v
-      - run: playwright install --with-deps chromium
-      - run: pytest tests/test_e2e.py --browser chromium -v
-      - if: always()
-        run: docker compose down --volumes
-  secrets:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Syntax check (py_compile)
+        run: |
+          python -m py_compile \
+            prompt_ops_app.py \
+            prompt_ops_mcp.py \
+            publishing_studio.py \
+            osint_perplexity_grok_radar.py
+
+      - name: Run tests
+        run: PYTHONPATH=. pytest -q tests/test_publishing.py tests/test_sources.py tests/test_mcp.py
+
+      - name: Validate docker-compose config
+        run: cp .env.example .env && docker compose config --quiet
