@@ -2,35 +2,94 @@ name: CI
 
 on:
   push:
+    branches: [main, 'feature/*']
   pull_request:
-
-permissions:
-  contents: read
+    branches: [main]
 
 jobs:
-  test:
+  validate-schemas:
+    name: Validate JSON Schemas
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: pip
+          python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Syntax check (py_compile)
+      - name: Install dependencies
         run: |
-          python -m py_compile \
-            prompt_ops_app.py \
-            prompt_ops_mcp.py \
-            publishing_studio.py \
-            osint_perplexity_grok_radar.py
+          pip install jsonschema
 
-      - name: Run tests
-        run: PYTHONPATH=. pytest -q tests/test_publishing.py tests/test_sources.py tests/test_mcp.py
+      - name: Validate JSON Schema contracts
+        run: |
+          python -c "
+import json
+from jsonschema import Draft202012Validator
+from pathlib import Path
 
-      - name: Validate docker-compose config
-        run: cp .env.example .env && docker compose config --quiet
+schema_files = list(Path('.').rglob('*.schema.json'))
+print(f'Found {len(schema_files)} schema files: {schema_files}')
+
+for schema_file in schema_files:
+    print(f'Validating {schema_file}...')
+    with open(schema_file) as f:
+        schema = json.load(f)
+    Draft202012Validator.check_schema(schema)
+    print(f'  ✓ {schema_file} is valid')
+
+print(f'All {len(schema_files)} schemas are valid!')
+"
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: validate-schemas
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        run: |
+          python -m pytest tests/ -v --tb=short
+
+      - name: Run meta-agent-compiler tests
+        run: |
+          python -m pytest .agents/skills/meta-agent-compiler/TESTS/ -v --tb=short
+
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install linters
+        run: |
+          pip install ruff mypy
+
+      - name: Run ruff
+        run: ruff check .
+
+      - name: Run mypy
+        run: mypy . --ignore-missing-imports
