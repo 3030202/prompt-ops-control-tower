@@ -306,12 +306,32 @@ async def _handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCo
 
 
 class BearerTokenASGI:
-    """ASGI-обёртка, требующая заголовок ``Authorization: Bearer <MCP_API_KEY>``."""
+    """ASGI-обёртка, требующая заголовок ``Authorization: Bearer <MCP_API_KEY>``.
+
+    Если у обёртки есть вложенное приложение ``_app`` (lifespan-протокол),
+    оно проксируется — это позволяет монтировать ``mcp_http_app`` как
+    стандартное Starlette/FastAPI-приложение и корректно запускать
+    ``StreamableHTTPSessionManager.run()`` через lifespan родителя.
+    """
 
     def __init__(self, app: Any) -> None:
         self.app = app
+        self._app = getattr(app, "_app", None)  # прокси lifespan у Starlette/Router
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope.get("type") == "lifespan":
+            # session_manager.run() уже вызывается из lifespan основного
+            # приложения (prompt_ops_app.py) — двойной старт task group
+            # недопустим, поэтому отвечаем на протокол заглушкой.
+            while True:
+                message = await receive()
+                if message["type"] == "lifespan.startup":
+                    await send({"type": "lifespan.startup.complete"})
+                elif message["type"] == "lifespan.shutdown":
+                    await send({"type": "lifespan.shutdown.complete"})
+                    return
+            return
+
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
@@ -346,9 +366,18 @@ class BearerTokenASGI:
 session_manager = StreamableHTTPSessionManager(app=mcp, stateless=True)
 
 
-def _build_mcp_http_app() -> Starlette:
-    inner = Starlette(routes=[Mount("/", app=session_manager.handle_request)])
-    return Starlette(routes=[Mount("/mcp", app=BearerTokenASGI(inner))])
+def _build_mcp_http_app() -> BearerTokenASGI:
+    """Возвращает ASGI-приложение MCP, обслуживающее путь ``/mcp``.
+
+    Возвращаемый объект — экземпляр :class:`BearerTokenASGI`, поэтому его
+    можно передавать напрямую в ``Starlette(routes=[Mount(..., app=...)])``
+    или ``FastAPI.mount(...)``. Внутри смонтирован Starlette с маршрутом
+    ``/mcp``, ведущим в ``session_manager.handle_request``; lifespan
+    проксируется через ``_app``, так что родительское приложение запустит
+    ``session_manager.run()`` автоматически.
+    """
+    inner = Starlette(routes=[Mount("/mcp", app=session_manager.handle_request)])
+    return BearerTokenASGI(inner)
 
 
 mcp_http_app = _build_mcp_http_app()
