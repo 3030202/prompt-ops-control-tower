@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from mcp import Client
+from mcp.shared.memory import create_connected_server_and_client_session as connect_to_mcp_server
 
 from prompt_ops_app import mcp_tags_match, mcp_types_match
 from prompt_ops_mcp import (
@@ -10,6 +10,22 @@ from prompt_ops_mcp import (
     configure_mcp,
     mcp,
 )
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+def test_app_routes_precede_mcp_mount():
+    """mcp_http_app должен монтироваться последним: catch-all "/" обязан перекрывать только /mcp."""
+    from prompt_ops_app import app as fastapi_app
+
+    mounts = [route for route in fastapi_app.routes if getattr(route, "path", "") == "/mcp"]
+    assert len(mounts) == 1
+    # Все реальные роуты объявлены до catch-all mount.
+    last_index = max(i for i, r in enumerate(fastapi_app.routes) if getattr(r, "path", None) == "/mcp")
+    assert last_index == len(fastapi_app.routes) - 1
 
 
 def test_mcp_filters_require_all_tags_and_allowlisted_types():
@@ -56,7 +72,7 @@ def configure_fake_backend():
 @pytest.mark.anyio
 async def test_mcp_lists_tools_and_calls_public_prompt_backend():
     configure_fake_backend()
-    async with Client(mcp, raise_exceptions=True) as client:
+    async with connect_to_mcp_server(mcp, raise_exceptions=True) as client:
         tools = await client.list_tools()
         names = {tool.name for tool in tools.tools}
         assert {
@@ -75,7 +91,7 @@ async def test_mcp_lists_tools_and_calls_public_prompt_backend():
 @pytest.mark.anyio
 async def test_mcp_semantic_search_uses_bounded_arguments():
     configure_fake_backend()
-    async with Client(mcp, raise_exceptions=True) as client:
+    async with connect_to_mcp_server(mcp, raise_exceptions=True) as client:
         result = await client.call_tool(
             "semantic_search_prompts",
             {"query": "build a FAQ", "tags": ["faq-generation"], "limit": 5},

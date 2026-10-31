@@ -47,6 +47,10 @@ from publishing_studio import (
 
 from prompt_ops_mcp import PromptOpsMCPBackend, configure_mcp, mcp, mcp_http_app
 
+# ВАЖНО: mcp_http_app монтируется ПОСЛЕ объявления всех роутов основного
+# приложения (см. конец файла), иначе перехватит запросы FastAPI.
+# Порядок проверяет тест test_mcp_http_app_mounted_last в tests/test_mcp.py.
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
