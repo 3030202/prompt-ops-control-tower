@@ -47,6 +47,11 @@ from publishing_studio import (
 
 from prompt_ops_mcp import PromptOpsMCPBackend, configure_mcp, mcp, mcp_http_app
 
+# ВАЖНО: mcp_http_app монтируется ПОСЛЕ объявления всех роутов основного
+# приложения (см. конец файла) и только на путь "/mcp" — монтировать его
+# на "/" нельзя, иначе он перехватит запросы FastAPI.
+# Порядок проверяет тест test_app_routes_precede_mcp_mount в tests/test_mcp.py.
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -4434,6 +4439,9 @@ async def lifespan(_: FastAPI):
     if cfg.has_telethon:
         app.state.background_tasks.append(asyncio.create_task(start_telethon_userbot(app.state.http_client, app.state.redis)))
 
+    # session_manager запускается один раз здесь; lifespan вложенного
+    # MCP-приложения (mcp_http_app) намеренно не вызывается при mount,
+    # иначе будет двойной старт task group.
     async with mcp.session_manager.run():
         try:
             yield
@@ -4447,7 +4455,8 @@ async def lifespan(_: FastAPI):
             await app.state.redis.aclose()
 
 
-app.mount("/", mcp_http_app)
+# MCP монтируется последним и только на /mcp (см. комментарий в начале файла).
+app.mount("/mcp", mcp_http_app)
 app.router.lifespan_context = lifespan
 
 
